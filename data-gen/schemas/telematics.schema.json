@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["trip_id","policy_number","customer_id","trip_date","distance_miles","duration_minutes","drive_score","source"],
+  "properties": {
+    "trip_id":           {"type": "string", "pattern": "^TRIP-[0-9]{6,8}$"},
+    "policy_number":     {"type": "string"},
+    "customer_id":       {"type": "string"},
+    "trip_date":         {"type": "string", "format": "date-time"},
+    "distance_miles":    {"type": "number", "minimum": 0},
+    "duration_minutes":  {"type": "number", "minimum": 0},
+    "hard_brakes":       {"type": "integer", "minimum": 0},
+    "rapid_accelerations": {"type": "integer", "minimum": 0},
+    "speeding_events":   {"type": "integer", "minimum": 0},
+    "night_driving_pct": {"type": "number", "minimum": 0, "maximum": 1},
+    "drive_score":       {"type": "number", "minimum": 0, "maximum": 100},
+    "source":            {"type": "string", "const": "synthetic-v1"}
+  }
+}

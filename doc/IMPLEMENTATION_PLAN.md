@@ -256,6 +256,7 @@ select = ["E", "F", "I"]   # pycodestyle, pyflakes, isort
 ```json
 {
   "TX": {
+    "weight": 9,
     "no_fault": false,
     "min_liability": {"bodily_injury_per_person": 30000, "bodily_injury_per_accident": 60000, "property_damage": 25000},
     "uninsured_motorist_required": false,
@@ -266,6 +267,7 @@ select = ["E", "F", "I"]   # pycodestyle, pyflakes, isort
     "claims_settle_days": 30
   },
   "MI": {
+    "weight": 4,
     "no_fault": true,
     "min_liability": {"bodily_injury_per_person": 50000, "bodily_injury_per_accident": 100000, "property_damage": 10000},
     "uninsured_motorist_required": false,
@@ -276,6 +278,7 @@ select = ["E", "F", "I"]   # pycodestyle, pyflakes, isort
     "claims_settle_days": 30
   },
   "PA": {
+    "weight": 5,
     "no_fault": true,
     "min_liability": {"bodily_injury_per_person": 15000, "bodily_injury_per_accident": 30000, "property_damage": 5000},
     "uninsured_motorist_required": false,
@@ -287,8 +290,8 @@ select = ["E", "F", "I"]   # pycodestyle, pyflakes, isort
   }
 }
 ```
-
-> All 50 states + DC must be present. High-volume states (CA, TX, FL, NY, PA) set a higher `weight` field that `customer_gen.py` reads for population distribution.
+> Suggested weight scale: 1–10, where CA/TX/FL get 9–10, mid-size states (PA, OH, IL) get 5–7, and low-population states (WY, ND, VT) get 1. This maps roughly to US vehicle registration distribution.
+> All 50 states + DC must be present. `weight` field that `customer_gen.py` reads for population distribution.
 
 #### `data-gen/config/coverage_rules.json` — structure
 ```json
@@ -401,7 +404,229 @@ All schemas live in `data-gen/schemas/`. Every generator validates output agains
   }
 }
 ```
+#### `faq.schema.json`
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aioi.internal/schemas/faq.schema.json",
+  "title": "AIOI FAQ Record",
+  "description": "A single Q&A pair in the AIOI FAQ corpus. State-specific FAQs set applicable_states to a list of state codes; generic FAQs set it to [\"ALL\"]. All records are tagged source: synthetic-faq-v1 for data governance.",
+  "type": "object",
+  "required": [
+    "faq_id",
+    "category",
+    "subcategory",
+    "question",
+    "answer",
+    "applicable_states",
+    "tags",
+    "source",
+    "version"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "faq_id": {
+      "type": "string",
+      "description": "Unique identifier for this FAQ record. Format: faq-{subcategory}-{zero-padded 3-digit index}.",
+      "pattern": "^faq-[a-z0-9-]+-[0-9]{3}$",
+      "examples": [
+        "faq-pip-001",
+        "faq-nofault-012",
+        "faq-totalloss-003",
+        "faq-drive-score-007"
+      ]
+    },
+    "category": {
+      "type": "string",
+      "description": "Top-level domain grouping. Matches the five FAQ categories defined in the strategy document.",
+      "enum": [
+        "coverage_concepts",
+        "state_rules",
+        "claims_process",
+        "costs_discounts",
+        "policy_management"
+      ]
+    },
+    "subcategory": {
+      "type": "string",
+      "description": "Second-level topic within the category. Free-form lowercase string with hyphens; must align with the subcategory lists in the strategy document.",
+      "minLength": 2,
+      "maxLength": 60,
+      "pattern": "^[a-z0-9_-]+$",
+      "examples": [
+        "pip",
+        "liability",
+        "collision",
+        "comprehensive",
+        "uninsured_motorist",
+        "gap",
+        "roadside",
+        "no_fault",
+        "minimum_liability",
+        "total_loss",
+        "pip_requirements",
+        "um_coverage",
+        "filing",
+        "after_filing",
+        "documentation",
+        "adjuster",
+        "rental",
+        "total_loss_process",
+        "settlement",
+        "premium_calc",
+        "drive_score",
+        "telematics",
+        "discounts",
+        "multi_policy",
+        "good_driver",
+        "credit",
+        "add_vehicle",
+        "add_driver",
+        "coverage_changes",
+        "renewal_lapse",
+        "cancellation",
+        "sr22"
+      ]
+    },
+    "question": {
+      "type": "string",
+      "description": "The customer-facing question text. Must be a complete, grammatically correct question ending with a question mark.",
+      "minLength": 10,
+      "maxLength": 300,
+      "pattern": "\\?$"
+    },
+    "answer": {
+      "type": "string",
+      "description": "The answer text. Must be grounded in AIOI policy rules and states.json / coverage_rules.json. Do not include information not modeled in the config files.",
+      "minLength": 20,
+      "maxLength": 2000
+    },
+    "applicable_states": {
+      "type": "array",
+      "description": "List of US state codes (2-letter USPS abbreviations) to which this FAQ applies, or [\"ALL\"] for FAQs applicable in every state. Used by the retrieval router to filter results before ranking when the customer's state is known.",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "oneOf": [
+          {
+            "const": "ALL",
+            "description": "Applies to all states — used for generic coverage concept and process FAQs."
+          },
+          {
+            "type": "string",
+            "pattern": "^(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)$",
+            "description": "A specific US state or DC."
+          }
+        ]
+      },
+      "examples": [
+        ["ALL"],
+        ["MI", "FL", "NY", "NJ", "PA"],
+        ["TX"],
+        ["CA", "TX", "FL", "NY", "PA"]
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "description": "Free-form lowercase keyword tags used for secondary retrieval filtering and analytics. Include the subcategory, related coverage types, and state codes where applicable.",
+      "minItems": 1,
+      "maxItems": 15,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9-]+$",
+        "minLength": 2,
+        "maxLength": 40
+      },
+      "examples": [
+        ["pip", "no-fault", "medical", "coverage"],
+        ["total-loss", "state-rule", "tx"],
+        ["drive-score", "telematics", "ubi", "discount"],
+        ["fnol", "claims-process", "filing"]
+      ]
+    },
+    "source": {
+      "type": "string",
+      "description": "Data governance tag. Must always be 'synthetic-faq-v1' for generated FAQ records. Production-authored records use a different source prefix.",
+      "const": "synthetic-faq-v1"
+    },
+    "version": {
+      "type": "string",
+      "description": "Schema/content version string. Increment the minor version when answer text is updated; increment the major version when the schema changes.",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "examples": ["1.0", "1.1", "2.0"]
+    },
+    "last_updated": {
+      "type": "string",
+      "description": "ISO 8601 date the record was last modified. Optional; populated by faq_gen.py when regenerating from config.",
+      "format": "date",
+      "examples": ["2026-03-15"]
+    },
+    "review_required": {
+      "type": "boolean",
+      "description": "Optional flag set to true when a state config change (states.json) may have invalidated this record's answer. Cleared after human review.",
+      "default": false
+    }
+  },
+  "examples": [
+    {
+      "faq_id": "faq-pip-001",
+      "category": "coverage_concepts",
+      "subcategory": "pip",
+      "question": "What is Personal Injury Protection (PIP) coverage?",
+      "answer": "PIP covers medical expenses, lost wages, and related costs for you and your passengers after an accident, regardless of who was at fault. It is required in no-fault states such as MI, FL, NY, NJ, and PA.",
+      "applicable_states": ["ALL"],
+      "tags": ["pip", "no-fault", "medical", "coverage"],
+      "source": "synthetic-faq-v1",
+      "version": "1.0"
+    },
+    {
+      "faq_id": "faq-nofault-012",
+      "category": "state_rules",
+      "subcategory": "no_fault",
+      "question": "Is Michigan a no-fault state?",
+      "answer": "Yes, Michigan is a no-fault state. This means that after an accident, your own insurance covers your medical expenses up to your PIP limit ($500,000), regardless of who caused the accident.",
+      "applicable_states": ["MI"],
+      "tags": ["no-fault", "pip", "state-rule", "mi"],
+      "source": "synthetic-faq-v1",
+      "version": "1.0"
+    },
+    {
+      "faq_id": "faq-totalloss-003",
+      "category": "state_rules",
+      "subcategory": "total_loss",
+      "question": "At what damage percentage is a car declared a total loss in Texas?",
+      "answer": "In Texas, a vehicle is declared a total loss when repair costs reach 100% or more of the vehicle's actual cash value (ACV).",
+      "applicable_states": ["TX"],
+      "tags": ["total-loss", "state-rule", "tx", "acv"],
+      "source": "synthetic-faq-v1",
+      "version": "1.0"
+    },
+    {
+      "faq_id": "faq-drive-score-007",
+      "category": "costs_discounts",
+      "subcategory": "drive_score",
+      "question": "What is the Iron Oak Drive Score and how does it affect my rate?",
+      "answer": "The Iron Oak Drive Score is a 0-to-100 score calculated from your telematics data — including hard brakes, rapid accelerations, speeding events, and night driving percentage. A score of 90 or above earns a 15% premium discount. Scores of 75-89 earn 8%, and 60-74 earn 3%. Scores below 60 receive no telematics discount.",
+      "applicable_states": ["ALL"],
+      "tags": ["drive-score", "telematics", "ubi", "discount", "premium"],
+      "source": "synthetic-faq-v1",
+      "version": "1.0"
+    },
+    {
+      "faq_id": "faq-filing-001",
+      "category": "claims_process",
+      "subcategory": "filing",
+      "question": "How do I report an accident and file a claim with AIOI?",
+      "answer": "To file a claim, contact Oak Assist through the AIOI app or call our claims line. You will need your policy number, the date and location of the incident, a description of what happened, and contact information for any other parties involved. Oak Assist will guide you through the First Notice of Loss (FNOL) process and confirm your claim number.",
+      "applicable_states": ["ALL"],
+      "tags": ["fnol", "claims-process", "filing", "oak-assist"],
+      "source": "synthetic-faq-v1",
+      "version": "1.0"
+    }
+  ]
+}
 
+```
 ### 3.3 Generator Contracts
 
 Each generator follows the same interface so `run_all.py` treats them uniformly:
@@ -426,6 +651,7 @@ def main(count: int, output_path: Path, config: dict, states_data: dict) -> None
 - `policy_gen.py` — one policy per customer minimum; 15% of customers get a second policy. Reads state rules to set mandatory coverages (e.g., PIP for MI/PA). Policy number: `{STATE_CODE}-{n:05d}`.
 - `claim_gen.py` — generates 1–3 claims per policy at a configurable rate (default: 30% of policies have at least one claim). Injects fraud signals at 3–5% rate: `["claim_delta_high", "frequency_spike", "telematics_anomaly", "rapid_refiling"]`. Adjuster notes and narratives generated via `Faker` sentence templates with claim-type-specific vocabulary.
 - `telematics_gen.py` — generates trips per policy proportional to policy age. Drive Score computed from component events: `100 - (hard_brakes * 2) - (rapid_accel * 1.5) - (speeding_events * 3) - (night_driving_pct * 10)`, clamped to `[0, 100]`.
+- `faq_gen.py` — generates FAQ records in two passes. First pass: coverage concept FAQs seeded from config/coverage_rules.json, applicable to all states (applicable_states: ["ALL"]). Second pass: state-specific FAQs generated programmatically from config/states.json — one no-fault explainer per no-fault state, one total loss threshold entry per state with a defined threshold. FAQ IDs follow the pattern faq-{subcategory}-{n:03d}. All records tagged source: synthetic-faq-v1. Output written to faqs/faq_corpus.json (gitignored). The generators — not the output file — are the asset; anyone cloning the repo runs faq_gen.py (or run_all.py) to produce their own corpus. State-scoped FAQs set applicable_states to a single state code so retrieval can pre-filter by the customer's state before similarity ranking; generic FAQs set applicable_states: ["ALL"]. The full five-category taxonomy (coverage concepts, state rules, claims process, costs & discounts, policy management) is defined in the strategy doc; the Phase 4 implementation expands the template list to cover all subcategories in each category.
 - `document_gen.py` — uses `reportlab` to produce PDFs. Three document types: `decl_{POLICY_NUMBER}.pdf`, `claim_letter_{CLAIM_ID}.pdf`, `renewal_{POLICY_NUMBER}.pdf`. Filename convention is load-bearing — `chunk_router.py` in Phase 4 uses it for document type detection without ML classification.
 
 ### 3.4 `run_all.py` — Entry Point

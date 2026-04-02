@@ -4,4 +4,3 @@
 - **Artifacts**: Generate all scripts/commands for both Windows (local) and Linux (AWS).
 - **Clarifications**: Ask only when necessary; include a suggested answer.
 - **Git**: Do not commit any changes.
-- **Preferred Tools** UV

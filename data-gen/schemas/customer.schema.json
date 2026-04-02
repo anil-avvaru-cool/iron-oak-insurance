@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["customer_id","first_name","last_name","state","zip","email","dob","created_at","source"],
+  "properties": {
+    "customer_id":  {"type": "string", "pattern": "^CUST-[0-9]{4,6}$"},
+    "first_name":   {"type": "string"},
+    "last_name":    {"type": "string"},
+    "state":        {"type": "string", "minLength": 2, "maxLength": 2},
+    "zip":          {"type": "string", "pattern": "^[0-9]{5}$"},
+    "email":        {"type": "string", "format": "email"},
+    "dob":          {"type": "string", "format": "date"},
+    "credit_score": {"type": "integer", "minimum": 300, "maximum": 850},
+    "created_at":   {"type": "string", "format": "date-time"},
+    "source":       {"type": "string", "const": "synthetic-v1"}
+  }
+}
