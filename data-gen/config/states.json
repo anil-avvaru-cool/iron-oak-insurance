@@ -1,0 +1,32 @@
+{
+  "TX": {
+    "no_fault": false,
+    "min_liability": {"bodily_injury_per_person": 30000, "bodily_injury_per_accident": 60000, "property_damage": 25000},
+    "uninsured_motorist_required": false,
+    "total_loss_threshold": 1.00,
+    "pip_required": false,
+    "pip_limit": null,
+    "claims_ack_days": 15,
+    "claims_settle_days": 30
+  },
+  "MI": {
+    "no_fault": true,
+    "min_liability": {"bodily_injury_per_person": 50000, "bodily_injury_per_accident": 100000, "property_damage": 10000},
+    "uninsured_motorist_required": false,
+    "total_loss_threshold": 0.75,
+    "pip_required": true,
+    "pip_limit": 500000,
+    "claims_ack_days": 10,
+    "claims_settle_days": 30
+  },
+  "PA": {
+    "no_fault": true,
+    "min_liability": {"bodily_injury_per_person": 15000, "bodily_injury_per_accident": 30000, "property_damage": 5000},
+    "uninsured_motorist_required": false,
+    "total_loss_threshold": 0.75,
+    "pip_required": true,
+    "pip_limit": 5000,
+    "claims_ack_days": 15,
+    "claims_settle_days": 30
+  }
+}

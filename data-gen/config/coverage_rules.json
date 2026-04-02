@@ -1,0 +1,11 @@
+{
+  "coverage_types": ["liability", "collision", "comprehensive", "pip", "uninsured_motorist", "gap", "roadside"],
+  "deductible_options": [250, 500, 1000, 2500],
+  "liability_limits": ["15/30/5", "25/50/10", "50/100/25", "100/300/50", "250/500/100"],
+  "drive_score_discount_tiers": [
+    {"min": 90, "discount_pct": 0.15},
+    {"min": 75, "discount_pct": 0.08},
+    {"min": 60, "discount_pct": 0.03},
+    {"min": 0,  "discount_pct": 0.00}
+  ]
+}
