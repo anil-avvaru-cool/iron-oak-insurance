@@ -407,30 +407,6 @@ All schemas live in `data-gen/schemas/`. Every generator validates output agains
   }
 }
 ```
-
-### `faq.schema.json`
-
-> The full `faq.schema.json` (with `additionalProperties: false`, all property descriptions, and five worked examples) is the canonical version defined in Phase 4's data-gen section. A summary schema suitable for Phase 1 bootstrap is below — replace it with the full version when implementing Phase 4.
-
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["faq_id","category","subcategory","question","answer","applicable_states","tags","source","version"],
-  "properties": {
-    "faq_id":             {"type": "string", "pattern": "^faq-[a-z0-9-]+-[0-9]{3}$"},
-    "category":           {"type": "string", "enum": ["coverage_concepts","state_rules","claims_process","costs_discounts","policy_management"]},
-    "subcategory":        {"type": "string"},
-    "question":           {"type": "string"},
-    "answer":             {"type": "string"},
-    "applicable_states":  {"type": "array", "items": {"type": "string"}},
-    "tags":               {"type": "array", "items": {"type": "string"}},
-    "source":             {"type": "string", "const": "synthetic-faq-v1"},
-    "version":            {"type": "string"}
-  }
-}
-```
-
 ---
 
 ## 5. Generator Contracts
@@ -457,7 +433,6 @@ def main(count: int, output_path: Path, config: dict, states_data: dict) -> None
 - `policy_gen.py` — one policy per customer minimum; 15% of customers get a second policy. Reads state rules to set mandatory coverages (e.g., PIP for MI/PA). Policy number: `{STATE_CODE}-{n:05d}`.
 - `claim_gen.py` — generates 1–3 claims per policy at a configurable rate (default: 30% of policies have at least one claim). Injects fraud signals at 3–5% rate: `["claim_delta_high", "frequency_spike", "telematics_anomaly", "rapid_refiling"]`. Adjuster notes and narratives generated via `Faker` sentence templates with claim-type-specific vocabulary.
 - `telematics_gen.py` — generates trips per policy proportional to policy age. Drive Score computed from component events: `100 - (hard_brakes * 2) - (rapid_accel * 1.5) - (speeding_events * 3) - (night_driving_pct * 10)`, clamped to `[0, 100]`.
-- `faq_gen.py` — generates FAQ records in two passes. First pass: coverage concept FAQs seeded from `coverage_rules.json`, applicable to all states (`applicable_states: ["ALL"]`). Second pass: state-specific FAQs generated programmatically from `states.json` — one no-fault explainer per no-fault state, one total loss threshold entry per state. FAQ IDs: `faq-{subcategory}-{n:03d}`. All records tagged `source: synthetic-faq-v1`. Output: `faqs/faq_corpus.json` (gitignored). The full five-category taxonomy is expanded in Phase 4.
 - `document_gen.py` — uses `reportlab` to produce PDFs. Three document types: `decl_{POLICY_NUMBER}.pdf`, `claim_letter_{CLAIM_ID}.pdf`, `renewal_{POLICY_NUMBER}.pdf`. Filename convention is load-bearing — `chunk_router.py` in Phase 4 uses it for document type detection without ML classification.
 
 ---

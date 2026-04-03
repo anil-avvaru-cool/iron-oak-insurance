@@ -1,0 +1,36 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python -c \"import json; d=json\\.load\\(open\\('data/customers\\.json'\\)\\); print\\(f'Generated \\{len\\(d\\)\\} customers'\\); states=set\\(c\\['state'\\] for c in d\\); print\\(f'States represented: \\{sorted\\(states\\)\\[:5\\]\\}\\.\\.\\. \\(\\{len\\(states\\)\\} total\\)'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -c \"import json; d=json\\.load\\(open\\('data/customers\\.json'\\)\\); print\\(json\\.dumps\\(d\\[0\\], indent=2\\)\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -c \"import json; d=json\\.load\\(open\\('data/policies\\.json'\\)\\); print\\(f'Generated \\{len\\(d\\)\\} policies from 100 customers'\\); statuses=\\{\\}; \\[statuses\\.update\\(\\{p\\['status'\\]: statuses\\.get\\(p\\['status'\\],0\\)\\+1\\}\\) for p in d\\]; print\\(f'Status distribution: \\{statuses\\}'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -c \"import json; d=json\\.load\\(open\\('data/policies\\.json'\\)\\); p=d\\[0\\]; print\\(f'Policy \\{p\\[\\\\\"policy_number\\\\\"\\]\\} for customer \\{p\\[\\\\\"customer_id\\\\\"\\]\\}\\\\nState: \\{p\\[\\\\\"state\\\\\"\\]\\}, Status: \\{p\\[\\\\\"status\\\\\"\\]\\}\\\\nDrive Score: \\{p\\[\\\\\"drive_score\\\\\"\\]\\}, Premium: \\\\\\$\\{p\\[\\\\\"premium_annual\\\\\"\\]\\}'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -c \"import json; d=json\\.load\\(open\\('data/policies\\.json'\\)\\); print\\(json\\.dumps\\(d\\[0\\], indent=2\\)\\)\" \\| head -30$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python data-gen/generators/policy_gen\\.py 2>&1 \\| head -1 ; type data/policies\\.json \\| Select-Object -First 40$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd c:\\\\src\\\\iron-oak-insurance ; python <<'EOF'\nimport json\nd = json\\.load\\(open\\('data/claims\\.json'\\)\\)\nfraud = \\[c for c in d if c\\['is_fraud'\\]\\]\nprint\\(f\"Total claims: \\{len\\(d\\)\\}\"\\)\nprint\\(f\"Fraud claims: \\{len\\(fraud\\)\\}/\\{len\\(d\\)\\} \\(\\{len\\(fraud\\)/len\\(d\\)\\*100:\\.1f\\}%\\)\"\\)\nstatuses = \\{\\}\nfor c in d:\n    statuses\\[c\\['status'\\]\\] = statuses\\.get\\(c\\['status'\\], 0\\) \\+ 1\nprint\\(f\"Status distribution: \\{statuses\\}\"\\)\nEOF\n$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python verify_phase1\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
