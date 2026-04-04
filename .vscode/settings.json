@@ -31,6 +31,22 @@
         "/^python verify_phase1\\.py$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^\\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data-gen/generators/run_all\\.py --customers 200 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^\\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data-gen/generators/run_all\\.py --customers 1000 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -c \"import json; p=json\\.load\\(open\\('data/policies\\.json'\\)\\); bad=\\[1 for x in p for k,v in x\\['coverages'\\]\\.items\\(\\) if 'included' not in v or 'required' not in v\\]; print\\('bad', len\\(bad\\)\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^& \\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data-gen/generators/run_all\\.py --customers 1000 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

@@ -182,8 +182,10 @@ Add dependencies as each phase is built — do not front-load all packages.
 
 **Phase 1 — Data Generation**
 ```bash
-uv add faker python-dateutil reportlab Pillow tqdm
+uv add faker python-dateutil reportlab Pillow tqdm jsonschema
 ```
+
+> **Note:** `jsonschema` is added in Phase 1 (not in the original plan) because every generator validates output against its schema before writing. It is a zero-cost addition with no downstream impact.
 
 **Phase 2 — Database**
 ```bash
@@ -335,11 +337,13 @@ All schemas live in `data-gen/schemas/`. Every generator validates output agains
 
 ### `policy.schema.json`
 
+The `vehicle` and `coverages` fields are fully typed with inline sub-schemas. This contract is load-bearing: Phase 2's `load_json.py` serializes both to JSONB, and Phase 3's feature engineering queries them directly (`vehicle->>'year'`, `vehicle->>'make'`, `coverages->'pip'->'required'`). The sub-schemas here must match exactly what those queries expect.
+
 ```json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["policy_number","customer_id","state","effective_date","expiry_date","status","coverages","premium_annual","source"],
+  "required": ["policy_number","customer_id","state","effective_date","expiry_date","status","coverages","vehicle","premium_annual","source"],
   "properties": {
     "policy_number":   {"type": "string", "pattern": "^[A-Z]{2}-[0-9]{5}$"},
     "customer_id":     {"type": "string"},
@@ -347,15 +351,62 @@ All schemas live in `data-gen/schemas/`. Every generator validates output agains
     "effective_date":  {"type": "string", "format": "date"},
     "expiry_date":     {"type": "string", "format": "date"},
     "status":          {"type": "string", "enum": ["active","lapsed","cancelled","pending_renewal"]},
-    "coverages":       {"type": "object"},
-    "vehicle":         {"type": "object"},
     "premium_annual":  {"type": "number", "minimum": 0},
     "drive_score":     {"type": ["number","null"], "minimum": 0, "maximum": 100},
     "agent_id":        {"type": "string"},
-    "source":          {"type": "string", "const": "synthetic-v1"}
+    "source":          {"type": "string", "const": "synthetic-v1"},
+
+    "vehicle": {
+      "type": "object",
+      "required": ["make", "model", "year", "vin"],
+      "additionalProperties": false,
+      "properties": {
+        "make":  {"type": "string"},
+        "model": {"type": "string"},
+        "year":  {"type": "integer", "minimum": 1990, "maximum": 2026},
+        "vin":   {"type": "string", "minLength": 17, "maxLength": 17}
+      }
+    },
+
+    "coverages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["included"],
+        "additionalProperties": false,
+        "properties": {
+          "included":   {"type": "boolean"},
+          "deductible": {"type": ["integer", "null"]},
+          "limit":      {"type": ["string", "null"]},
+          "required":   {"type": "boolean"},
+          "pip_limit":  {"type": ["integer", "null"]}
+        }
+      },
+      "propertyNames": {
+        "enum": ["liability","collision","comprehensive","pip","uninsured_motorist","gap","roadside"]
+      }
+    }
   }
 }
 ```
+
+**Sub-schema design notes:**
+
+`vehicle` — uses `additionalProperties: false` to prevent drift between the generator and downstream JSONB queries. The `year` range (1990–2026) covers the full realistic fleet without allowing test noise. `vin` length is fixed at 17 to match the North American standard.
+
+`coverages` — uses `additionalProperties` as the value schema (standard JSON Schema map pattern) so the set of allowed coverage keys is controlled by `propertyNames.enum`, which mirrors `coverage_rules.json`'s `coverage_types` list exactly. When a new coverage type is added to config, updating one enum in this schema keeps both in sync. The `pip_limit` field is included at the coverage level (in addition to the state-level `pip_limit` in `states.json`) to support per-policy PIP elections in no-fault states where customers can choose benefit levels.
+
+**Coverage key presence rules enforced by `policy_gen.py` (not the schema):**
+
+| State rule | Generator behavior |
+|---|---|
+| `pip_required: true` (MI, FL, NY, NJ, PA) | `pip` key present with `included: true`, `required: true`, `pip_limit` set from `states.json` |
+| `uninsured_motorist_required: true` | `uninsured_motorist` key present with `included: true`, `required: true` |
+| All other coverages | `included` reflects customer election; `required: false` |
+
+> **Note**: `policy_gen.py` now generates coverage entries with `included`, `required`, `deductible`, `limit`, and `pip_limit` to match `policy.schema.json` contract. The older `enabled` field is no longer used.
+
+> **Flag for Phase 3:** The `coverages->'pip'->'required'` JSONB query in `db/schema.sql` verification depends on the `required` boolean being present on every `pip` object. Ensure `policy_gen.py` always emits `required` (even as `false`) for all coverage objects — do not omit it for optional coverages.
 
 ### `claim.schema.json`
 
@@ -407,6 +458,7 @@ All schemas live in `data-gen/schemas/`. Every generator validates output agains
   }
 }
 ```
+
 ---
 
 ## 5. Generator Contracts
@@ -427,13 +479,56 @@ def main(count: int, output_path: Path, config: dict, states_data: dict) -> None
     print(f"[{output_path.name}] wrote {len(records):,} records → {output_path}")
 ```
 
+**Schema validation helper** — shared by all generators:
+
+```python
+# data-gen/generators/validate.py
+import json
+from pathlib import Path
+import jsonschema
+
+_schema_cache: dict = {}
+
+def validate_records(records: list[dict], schema_name: str) -> None:
+    """Validate a list of records against a named schema. Raises on first violation."""
+    if schema_name not in _schema_cache:
+        schema_path = Path("data-gen/schemas") / schema_name
+        _schema_cache[schema_name] = json.loads(schema_path.read_text())
+    schema = _schema_cache[schema_name]
+    for i, record in enumerate(records):
+        try:
+            jsonschema.validate(instance=record, schema=schema)
+        except jsonschema.ValidationError as e:
+            raise ValueError(f"Record {i} failed {schema_name} validation: {e.message}") from e
+```
+
+Each generator calls `validate_records(records, "policy.schema.json")` (or its own schema) before writing. This catches drift between generator logic and schema contract at generation time, not at load time.
+
 **Key generator notes:**
 
 - `customer_gen.py` — uses `Faker` with locale `en_US`. State assignment uses weighted random choice from `states.json` population weights. IDs: `CUST-{n:05d}`.
-- `policy_gen.py` — one policy per customer minimum; 15% of customers get a second policy. Reads state rules to set mandatory coverages (e.g., PIP for MI/PA). Policy number: `{STATE_CODE}-{n:05d}`.
+
+- `policy_gen.py` — one policy per customer minimum; 15% of customers get a second policy. Reads `states.json` to set mandatory coverages. Policy number: `{STATE_CODE}-{n:05d}`.
+
+  **Coverage object construction rules** (must match the `coverages` sub-schema):
+  - Every policy emits all 7 coverage keys from `coverage_rules.json`'s `coverage_types` list.
+  - `liability` is always `included: true` (required in all states).
+  - For no-fault states (`pip_required: true`): `pip` is `included: true`, `required: true`, `pip_limit` set from `states.json`.
+  - For states where `uninsured_motorist_required: true`: `uninsured_motorist` is `included: true`, `required: true`.
+  - All other coverages set `included` by customer election; `required` is always emitted (as `false` for optional coverages — never omitted).
+  - `deductible` is drawn from `coverage_rules.json`'s `deductible_options` for applicable coverages; `null` for coverages where it does not apply (liability, roadside).
+  - `limit` for liability is drawn from `coverage_rules.json`'s `liability_limits`; `null` for non-liability coverages.
+
+  **Vehicle object construction rules** (must match the `vehicle` sub-schema):
+  - `make` and `model`: drawn from a realistic fleet list (Toyota/Camry, Ford/F-150, Honda/Civic, etc.).
+  - `year`: random integer in range 1990–2026, weighted toward recent years.
+  - `vin`: 17-character string generated with correct format (`[A-HJ-NPR-Z0-9]{17}`). Use `Faker`'s `vin()` or generate with a simple template — exactness matters for length, not checksum validation at this stage.
+
 - `claim_gen.py` — generates 1–3 claims per policy at a configurable rate (default: 30% of policies have at least one claim). Injects fraud signals at 3–5% rate: `["claim_delta_high", "frequency_spike", "telematics_anomaly", "rapid_refiling"]`. Adjuster notes and narratives generated via `Faker` sentence templates with claim-type-specific vocabulary.
+
 - `telematics_gen.py` — generates trips per policy proportional to policy age. Drive Score computed from component events: `100 - (hard_brakes * 2) - (rapid_accel * 1.5) - (speeding_events * 3) - (night_driving_pct * 10)`, clamped to `[0, 100]`.
-- `document_gen.py` — uses `reportlab` to produce PDFs. Three document types: `decl_{POLICY_NUMBER}.pdf`, `claim_letter_{CLAIM_ID}.pdf`, `renewal_{POLICY_NUMBER}.pdf`. Filename convention is load-bearing — `chunk_router.py` in Phase 4 uses it for document type detection without ML classification.
+
+- `document_gen.py` — uses `reportlab` to produce PDFs. Three document types: `decl_{POLICY_NUMBER}.pdf`, `claim_letter_{CLAIM_ID}.pdf`, `renewal_{POLICY_NUMBER}.pdf`. Filename convention is load-bearing — `chunk_router.py` in Phase 4 uses it for document type detection without ML classification. Declaration pages must render the `coverages` object as a table with one row per coverage type, showing limit and deductible — this is what Phase 4's `chunk_declaration.py` will parse.
 
 ---
 
@@ -506,6 +601,36 @@ uv run python data-gen/generators/run_all.py --customers 100 --pdf-docs 50
 
 # Spot-check fraud rate
 python -c "import json; d=json.load(open('data/claims.json')); fraud=[c for c in d if c['is_fraud']]; print(f'{len(fraud)}/{len(d)} fraud ({len(fraud)/len(d):.1%})')"
+
+# Spot-check vehicle sub-schema (all VINs are 17 chars)
+python -c "
+import json
+policies = json.load(open('data/policies.json'))
+bad_vins = [p['policy_number'] for p in policies if len(p['vehicle']['vin']) != 17]
+print(f'VIN length violations: {bad_vins or \"none\"}')
+"
+
+# Spot-check coverages sub-schema (all 7 keys present on every policy)
+python -c "
+import json
+from data_gen.config import coverage_rules  # or load directly
+rules = json.load(open('data-gen/config/coverage_rules.json'))
+expected = set(rules['coverage_types'])
+policies = json.load(open('data/policies.json'))
+bad = [p['policy_number'] for p in policies if set(p['coverages'].keys()) != expected]
+print(f'Coverage key violations: {bad or \"none\"}')
+"
+
+# Spot-check PIP required flag on no-fault states
+python -c "
+import json
+states = json.load(open('data-gen/config/states.json'))
+policies = json.load(open('data/policies.json'))
+nf_states = {s for s, r in states.items() if r.get('pip_required')}
+bad = [p['policy_number'] for p in policies
+       if p['state'] in nf_states and not p['coverages'].get('pip', {}).get('required')]
+print(f'PIP required violations in no-fault states: {bad[:5] or \"none\"} (showing first 5)')
+"
 ```
 
 ### Phase Gate Checklist
@@ -514,13 +639,18 @@ python -c "import json; d=json.load(open('data/claims.json')); fraud=[c for c in
 - [ ] Fraud rate is within 3–5%
 - [ ] All 50 states + DC present in `customers.json`
 - [ ] PDFs generated with correct filename convention (`decl_`, `claim_letter_`, `renewal_`)
+- [ ] All policy records pass `policy.schema.json` validation (vehicle + coverages sub-schemas)
+- [ ] All 7 coverage keys present on every policy record
+- [ ] PIP coverage marked `required: true` for all no-fault state policies (MI, FL, NY, NJ, PA)
+- [ ] All VINs are exactly 17 characters
+- [ ] `required` field always emitted on coverage objects (never omitted for optional coverages)
 - [ ] `uv run ruff check .` passes with no errors
 
 ### Git Tag
 
 ```bash
 git add -A
-git commit -m "Phase 1: data generation — all generators + schemas + config"
+git commit -m "Phase 1: data generation — all generators + schemas + config (nested vehicle/coverages sub-schemas)"
 git tag v0.1.0
 ```
 

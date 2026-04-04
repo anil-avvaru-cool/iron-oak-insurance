@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["policy_number","customer_id","state","effective_date","expiry_date","status","coverages","premium_annual","source"],
+  "required": ["policy_number","customer_id","state","effective_date","expiry_date","status","coverages","vehicle","premium_annual","source"],
   "properties": {
     "policy_number":   {"type": "string", "pattern": "^[A-Z]{2}-[0-9]{5}$"},
     "customer_id":     {"type": "string"},
@@ -9,11 +9,40 @@
     "effective_date":  {"type": "string", "format": "date"},
     "expiry_date":     {"type": "string", "format": "date"},
     "status":          {"type": "string", "enum": ["active","lapsed","cancelled","pending_renewal"]},
-    "coverages":       {"type": "object"},
-    "vehicle":         {"type": "object"},
     "premium_annual":  {"type": "number", "minimum": 0},
     "drive_score":     {"type": ["number","null"], "minimum": 0, "maximum": 100},
     "agent_id":        {"type": "string"},
-    "source":          {"type": "string", "const": "synthetic-v1"}
+    "source":          {"type": "string", "const": "synthetic-v1"},
+
+    "vehicle": {
+      "type": "object",
+      "required": ["make", "model", "year", "vin"],
+      "additionalProperties": false,
+      "properties": {
+        "make":  {"type": "string"},
+        "model": {"type": "string"},
+        "year":  {"type": "integer", "minimum": 1990, "maximum": 2026},
+        "vin":   {"type": "string", "minLength": 17, "maxLength": 17}
+      }
+    },
+
+    "coverages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["included"],
+        "additionalProperties": false,
+        "properties": {
+          "included":   {"type": "boolean"},
+          "deductible": {"type": ["integer", "null"]},
+          "limit":      {"type": ["string", "null"]},
+          "required":   {"type": "boolean"},
+          "pip_limit":  {"type": ["integer", "null"]}
+        }
+      },
+      "propertyNames": {
+        "enum": ["liability","collision","comprehensive","pip","uninsured_motorist","gap","roadside"]
+      }
+    }
   }
 }

@@ -88,6 +88,9 @@ colorama==0.4.6 ; sys_platform == 'win32' \
     --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
     # via tqdm
+dotenv==0.9.9 \
+    --hash=sha256:29cf74a087b31dafdb5a446b6d7e11cbce8ed2741540e2339c69fbef92c94ce9
+    # via iron-oak-insurance
 faker==40.12.0 \
     --hash=sha256:58b5a9054c367bd5fb2e948634105364cc570e78a98a8e5161a74691c45f158f \
     --hash=sha256:6238a4058a8b581892e3d78fe5fdfa7568739e1c8283e4ede83f1dde0bfc1a3b
@@ -176,10 +179,21 @@ pillow==12.2.0 \
     # via
     #   iron-oak-insurance
     #   reportlab
+psycopg2==2.9.11 \
+    --hash=sha256:210daed32e18f35e3140a1ebe059ac29209dd96468f2f7559aa59f75ee82a5cb \
+    --hash=sha256:8dc379166b5b7d5ea66dcebf433011dfc51a7bb8a5fc12367fa05668e5fc53c8 \
+    --hash=sha256:964d31caf728e217c697ff77ea69c2ba0865fa41ec20bb00f0977e62fdcc52e3 \
+    --hash=sha256:e03e4a6dbe87ff81540b434f2e5dc2bddad10296db5eea7bdc995bf5f4162938 \
+    --hash=sha256:f10a48acba5fe6e312b891f290b4d2ca595fc9a06850fe53320beac353575578
+    # via iron-oak-insurance
 python-dateutil==2.9.0.post0 \
     --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 \
     --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
     # via iron-oak-insurance
+python-dotenv==1.2.2 \
+    --hash=sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a \
+    --hash=sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3
+    # via dotenv
 reportlab==4.4.10 \
     --hash=sha256:5abc815746ae2bc44e7ff25db96814f921349ca814c992c7eac3c26029bf7c24 \
     --hash=sha256:5cbbb34ac3546039d0086deb2938cdec06b12da3cdb836e813258eb33cd28487

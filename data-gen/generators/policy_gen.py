@@ -57,34 +57,50 @@ def generate(count: int, config: dict, states_data: dict) -> list[dict]:
             policy_counter += 1
             policy_number = f"{state[:2]}-{policy_counter:05d}"
 
-            # Build coverages object respecting state rules
+            # Build coverages object respecting state rules and schema contract
             coverages = {}
             for cov_type in coverage_types:
                 if cov_type == "pip" and state_rules.get("pip_required"):
                     coverages[cov_type] = {
-                        "enabled": True,
+                        "included": True,
+                        "required": True,
+                        "deductible": None,
                         "limit": state_rules.get("pip_limit", 5000),
+                        "pip_limit": state_rules.get("pip_limit", 5000),
                     }
                 elif cov_type == "uninsured_motorist" and state_rules.get(
                     "uninsured_motorist_required"
                 ):
                     coverages[cov_type] = {
-                        "enabled": True,
+                        "included": True,
+                        "required": True,
+                        "deductible": None,
                         "limit": "25/50/10",
+                        "pip_limit": None,
                     }
                 else:
+                    is_core = cov_type in ["liability", "collision", "comprehensive"]
+                    included = True if is_core else random.choice([True, False])
                     coverages[cov_type] = {
-                        "enabled": random.choice([True, False])
-                        if cov_type not in ["liability", "collision", "comprehensive"]
-                        else True,
+                        "included": included,
+                        "required": False,
                         "deductible": random.choice(deductible_options)
-                        if cov_type not in ["liability", "pip"]
+                        if cov_type in ["collision", "comprehensive", "gap", "roadside"]
+                        and included
                         else None,
+                        "limit": None,
+                        "pip_limit": None,
                     }
 
-            # Liability limits
+            # Liability limits and required flags
             liability_limit = random.choice(liability_limits)
-            coverages["liability"] = {"enabled": True, "limit": liability_limit}
+            coverages["liability"] = {
+                "included": True,
+                "required": False,
+                "deductible": None,
+                "limit": liability_limit,
+                "pip_limit": None,
+            }
 
             # Drive score
             drive_score = random.randint(0, 100)
