@@ -320,9 +320,9 @@ if __name__ == "__main__":
 
 ```bash
 # Train all models
-uv run python ai/models/fraud_detection/model.py
-uv run python ai/models/risk_scoring/model.py
-uv run python ai/models/churn_prediction/model.py
+uv run python -m ai.models.fraud_detection.model
+uv run python -m ai.models.risk_scoring.model
+uv run python -m ai.models.churn_prediction.model
 
 # Start API
 uv run python ai/api/handlers/main.py

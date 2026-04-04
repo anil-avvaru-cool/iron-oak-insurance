@@ -17,7 +17,9 @@ This file captures decisions and hardening concerns that span multiple phases. R
 9. [Operational Readiness TODO Flags](#9-operational-readiness-todo-flags)
 
 ---
-
+Todo Note: 
+- Add all Config values in .env file
+- Remove hardcoded default credentials/values in code and pull from .env file.
 ## 1. Toolchain Decision
 
 `requirements.txt` in the strategy doc is retained as a **generated artifact** only:
