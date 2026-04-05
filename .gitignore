@@ -22,3 +22,5 @@ infra/cdk/node_modules/
 .cache/
 *.pt
 *.onnx
+
+ai/models/fraud_detection/fraud_model.json

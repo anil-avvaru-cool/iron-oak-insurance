@@ -39,8 +39,8 @@ load_dotenv()
 
 def get_engine():
     url = (
-        f"postgresql+psycopg2://{os.getenv('DB_USER','aioi')}:{os.getenv('DB_PASSWORD','aioi_local')}"
-        f"@{os.getenv('DB_HOST','localhost')}:{os.getenv('DB_PORT',5432)}/{os.getenv('DB_NAME','aioi')}"
+        f"postgresql+psycopg2://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
+        f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
     )
     return create_engine(url)
 
@@ -53,7 +53,7 @@ def fraud_features(engine=None) -> pd.DataFrame:
             c.is_fraud                                              AS label,
             c.claim_amount,
             c.claim_amount / NULLIF(p.premium_annual, 0)           AS claim_to_premium_ratio,
-            EXTRACT(DAY FROM c.filed_date::date - c.incident_date::date) AS days_to_file,
+            (c.filed_date::date - c.incident_date::date) AS days_to_file,
             COUNT(c2.claim_id) OVER (PARTITION BY c.customer_id)   AS customer_claim_count,
             COALESCE(t.avg_drive_score, 50)                        AS avg_drive_score,
             COALESCE(t.hard_brakes_90d, 0)                         AS hard_brakes_90d,
@@ -130,7 +130,7 @@ def churn_features(engine=None) -> pd.DataFrame:
 ```python
 """
 Fraud Detection — XGBoost binary classifier.
-Runnable: uv run python ai/models/fraud_detection/model.py
+uv run python -m ai.models.fraud_detection.model
 Lambda-compatible: import train, predict as library functions.
 """
 from __future__ import annotations
