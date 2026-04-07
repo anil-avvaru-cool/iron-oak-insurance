@@ -3,24 +3,26 @@ data/
 documents/
 faqs/
 
-# Environment
+# Environment — no values committed
 .env
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
-
-# uv
 .venv/
-uv.lock        # commit this if sharing exact reproducible builds
+
+# uv lockfile — commit this for reproducible builds
+# uv.lock
 
 # AWS CDK
 infra/cdk/cdk.out/
 infra/cdk/node_modules/
 
-# Models cached locally
+# Cached models
 .cache/
 *.pt
 *.onnx
-
-ai/models/fraud_detection/fraud_model.json
+ai/models/**/*.json
+ai/models/**/fairness_reports/

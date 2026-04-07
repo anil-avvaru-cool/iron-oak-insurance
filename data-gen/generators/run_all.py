@@ -1,113 +1,126 @@
 """
-run_all.py — Single entry point for all AIOI data generation.
+run_all.py — single entry point for all AIOI data generation.
 
 Usage:
-  uv run python data-gen/generators/run_all.py
-  uv run python data-gen/generators/run_all.py --customers 500 --fraud-rate 0.05
-  uv run python data-gen/generators/run_all.py --pdf-docs 2000
-"""
+    uv run python data-gen/generators/run_all.py
+    uv run python data-gen/generators/run_all.py --customers 500 --fraud-rate 0.05
+    uv run python data-gen/generators/run_all.py --customers 100 --pdf-docs 50 --no-pdfs
 
+Generation order is fixed — each step depends on the previous:
+    1. customers.json     (standalone)
+    2. policies.json      (reads customers.json)
+    3. claims.json        (reads policies.json)
+    4. telematics.json    (reads policies.json; skips non-enrolled)
+    5. PDFs               (reads customers/policies/claims)
+    6. FAQs               (Phase 4 stub — no-op until Phase 4)
+"""
 import argparse
 import json
+import sys
+import time
 from pathlib import Path
 
+# Allow running from repo root or from data-gen/generators/
+_GENERATORS_DIR = Path(__file__).parent
+_CONFIG_DIR = _GENERATORS_DIR.parent / "config"
 
-def main():
-    """Orchestrate all data generators."""
-    parser = argparse.ArgumentParser(
-        description="AIOI synthetic data generation for all entities"
-    )
-    parser.add_argument(
-        "--customers", type=int, default=1000, help="Number of customers to generate"
-    )
-    parser.add_argument(
-        "--fraud-rate",
-        type=float,
-        default=0.04,
-        help="Fraud rate for claims (0.0-1.0)",
-    )
-    parser.add_argument(
-        "--trips-per-policy",
-        type=int,
-        default=50,
-        help="Average trips per policy",
-    )
-    parser.add_argument(
-        "--pdf-docs",
-        type=int,
-        default=1000,
-        help="Total PDFs to generate (declaration + claim + renewal combined)",
-    )
-    parser.add_argument(
-        "--state-focus",
-        type=str,
-        default=None,
-        help="Comma-separated state codes to oversample, e.g., TX,PA",
-    )
+if str(_GENERATORS_DIR) not in sys.path:
+    sys.path.insert(0, str(_GENERATORS_DIR))
 
+
+def _load_config() -> tuple[dict, dict]:
+    states_data = json.loads((_CONFIG_DIR / "states.json").read_text())
+    coverage_rules = json.loads((_CONFIG_DIR / "coverage_rules.json").read_text())
+    return states_data, coverage_rules
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="AIOI synthetic data generator")
+    parser.add_argument("--customers", type=int, default=1000,
+                        help="Number of customer records (default: 1000)")
+    parser.add_argument("--fraud-rate", type=float, default=0.04,
+                        help="Claim fraud injection rate 0.0-0.15 (default: 0.04)")
+    parser.add_argument("--trips-target", type=int, default=50000,
+                        help="Target total telematics trips across enrolled policies (default: 50000)")
+    parser.add_argument("--pdf-docs", type=int, default=500,
+                        help="Total PDFs to generate (default: 500)")
+    parser.add_argument("--no-pdfs", action="store_true",
+                        help="Skip PDF generation (faster for dev/testing)")
+    parser.add_argument("--output-dir", type=str, default=".",
+                        help="Root directory for data/, documents/, faqs/ (default: .)")
     args = parser.parse_args()
 
-    # Load config files
-    config_dir = Path(__file__).parent.parent / "config"
-    states_data = json.loads((config_dir / "states.json").read_text())
-    coverage_rules = json.loads((config_dir / "coverage_rules.json").read_text())
-    config = {"fraud_rate": args.fraud_rate, "coverage_rules": coverage_rules}
+    if not (0.0 <= args.fraud_rate <= 0.15):
+        parser.error("--fraud-rate must be between 0.0 and 0.15")
 
-    data_dir = Path(__file__).parent.parent.parent / "data"
-    data_dir.mkdir(exist_ok=True)
+    states_data, coverage_rules = _load_config()
+    config = {"coverage_rules": coverage_rules, "fraud_rate": args.fraud_rate}
 
-    print("\n" + "=" * 70)
-    print("AIOI SYNTHETIC DATA GENERATION")
-    print("=" * 70)
-    print(
-        f"Customers: {args.customers:,} | Fraud Rate: {args.fraud_rate:.1%} | "
-        f"PDFs: {args.pdf_docs:,}"
-    )
-    print("=" * 70 + "\n")
+    root = Path(args.output_dir)
+    data_dir = root / "data"
+    docs_dir = root / "documents"
+    faqs_dir = root / "faqs"
 
-    # Import generators in dependency order
+    t_total = time.time()
+    print(f"\n{'='*55}")
+    print("  AVVARU IRON OAK INSURANCE — Data Generation")
+    print(f"{'='*55}")
+    print(f"  Customers:      {args.customers:,}")
+    print(f"  Fraud rate:     {args.fraud_rate:.1%}")
+    print(f"  Trips target:   {args.trips_target:,}")
+    print(f"  PDFs:           {'skipped' if args.no_pdfs else str(args.pdf_docs) + ' docs'}")
+    print(f"{'='*55}\n")
+
+    # ── Step 1: Customers ──────────────────────────────────────────────────
     from customer_gen import main as gen_customers
-    from policy_gen import main as gen_policies
-    from claim_gen import main as gen_claims
-    from telematics_gen import main as gen_telematics
-    from document_gen import main as gen_documents
-
-    # 1. Generate customers (independent)
-    print("[1/5] Generating customers...")
+    t0 = time.time()
     gen_customers(args.customers, data_dir / "customers.json", config, states_data)
+    print(f"  ✓ customers ({time.time()-t0:.1f}s)")
 
-    # 2. Generate policies (depends on customers)
-    print("[2/5] Generating policies...")
+    # ── Step 2: Policies ───────────────────────────────────────────────────
+    from policy_gen import main as gen_policies
+    t0 = time.time()
     gen_policies(args.customers, data_dir / "policies.json", config, states_data)
+    print(f"  ✓ policies ({time.time()-t0:.1f}s)")
 
-    # 3. Generate claims (depends on policies)
-    print("[3/5] Generating claims...")
+    # ── Step 3: Claims ─────────────────────────────────────────────────────
+    from claim_gen import main as gen_claims
+    t0 = time.time()
     gen_claims(args.customers, data_dir / "claims.json", config, states_data)
+    print(f"  ✓ claims ({time.time()-t0:.1f}s)")
 
-    # 4. Generate telematics (depends on policies)
-    print("[4/5] Generating telematics...")
-    total_trips = args.customers * args.trips_per_policy
-    gen_telematics(total_trips, data_dir / "telematics.json", config, states_data)
+    # ── Step 4: Telematics ─────────────────────────────────────────────────
+    from telematics_gen import main as gen_telematics
+    t0 = time.time()
+    gen_telematics(args.trips_target, data_dir / "telematics.json", config, states_data)
+    print(f"  ✓ telematics ({time.time()-t0:.1f}s)")
 
-    # 5. Generate documents (depends on policies + claims)
-    print("[5/5] Generating documents...")
-    docs_dir = Path(__file__).parent.parent.parent / "documents"
-    gen_documents(args.pdf_docs, docs_dir, config, states_data)
+    # ── Step 5: PDFs (optional) ────────────────────────────────────────────
+    if not args.no_pdfs:
+        from document_gen import main as gen_documents
+        t0 = time.time()
+        gen_documents(args.pdf_docs, docs_dir, config, states_data)
+        print(f"  ✓ PDFs ({time.time()-t0:.1f}s)")
+    else:
+        print("  – PDFs skipped (--no-pdfs)")
 
-    # Summary
-    print("\n" + "=" * 70)
-    print("✓ ALL DATA GENERATED SUCCESSFULLY")
-    print("=" * 70)
-    print(f"  customers:  {data_dir / 'customers.json'}")
-    print(f"  policies:   {data_dir / 'policies.json'}")
-    print(f"  claims:     {data_dir / 'claims.json'}")
-    print(f"  telematics: {data_dir / 'telematics.json'}")
-    print(f"  documents:  {docs_dir} (PDFs)")
-    print("=" * 70 + "\n")
+    # ── Step 6: FAQs (Phase 4 stub) ────────────────────────────────────────
+    from faq_gen import main as gen_faqs
+    t0 = time.time()
+    gen_faqs(faqs_dir / "faq_corpus.json", config, states_data)
+    print(f"  ✓ FAQs ({time.time()-t0:.1f}s)")
 
-    print("Next steps:")
-    print("  - Verify data in data/ directory")
-    print("  - Run Phase 2: Load into PostgreSQL (see PHASE_2_DATABASE.md)")
+    elapsed = time.time() - t_total
+    print(f"\n{'='*55}")
+    print(f"  ✓ Generation complete in {elapsed:.1f}s")
+    print(f"{'='*55}")
+    print(f"  data/customers.json   → {data_dir}/customers.json")
+    print(f"  data/policies.json    → {data_dir}/policies.json")
+    print(f"  data/claims.json      → {data_dir}/claims.json")
+    print(f"  data/telematics.json  → {data_dir}/telematics.json")
+    if not args.no_pdfs:
+        print(f"  documents/            → {docs_dir}/")
+    print(f"  faqs/faq_corpus.json  → {faqs_dir}/faq_corpus.json")
     print()
 
 

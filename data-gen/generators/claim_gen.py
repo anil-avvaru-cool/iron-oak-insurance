@@ -1,159 +1,299 @@
 """
-Claims data generator for AIOI.
+claim_gen.py — generates synthetic claim records for AIOI.
 
-Generates synthetic insurance claims with fraud injection and
-realistic adjuster narratives.
+Usage:
+    uv run python data-gen/generators/claim_gen.py
+    from claim_gen import generate, main
+
+Key design decisions:
+    - Claim rate defaults to ~28% of policies (configurable via coverage_rules.json)
+    - Fraud injected at configurable rate (default 4%); fraud signals are specific and consistent
+    - Fraud signals are realistic combinations: claim_delta_high + telematics_anomaly, etc.
+    - Adjuster notes and narratives use domain-specific vocabulary
+    - Claims match the coverage types on the policy (no PIP claim if PIP not on policy)
+    - Filed date is always >= incident date; filing lag is realistic (0-60 days)
+    - Settlement amounts are < claim amounts for approved/settled claims
+    - No-fault state claims skew toward PIP claim type
 """
+from __future__ import annotations
 
 import json
 import random
-from datetime import datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 from faker import Faker
+from validate import validate_records
+
+fake = Faker("en_US")
+Faker.seed(44)
+random.seed(44)
+
+_CLAIM_TYPES = ["collision", "comprehensive", "liability", "pip", "uninsured_motorist"]
+
+# Adjuster note and narrative templates by claim type
+_COLLISION_NARRATIVES = [
+    "Insured reports vehicle struck another vehicle at intersection. Airbags deployed. Damage to front bumper, hood, and radiator assessed at repair facility.",
+    "Insured was rear-ended at a stoplight. Significant rear damage to trunk and bumper. Other driver admitted fault at scene.",
+    "Insured sideswiped a parked vehicle while changing lanes. Door and quarter panel damage on driver side.",
+    "Insured vehicle lost control on wet road and struck guardrail. Front-end and suspension damage noted by appraiser.",
+    "Multi-vehicle accident on highway. Insured vehicle struck from behind and pushed into vehicle ahead.",
+]
+_COMPREHENSIVE_NARRATIVES = [
+    "Insured reports windshield shattered by road debris on I-35. No other damage noted.",
+    "Vehicle vandalized overnight in parking garage. Keyed paint on both sides, side mirror broken.",
+    "Hail storm caused extensive denting to hood, roof, and trunk. Windshield cracked.",
+    "Tree branch fell on vehicle during storm. Roof dented, sunroof shattered.",
+    "Insured reports vehicle was stolen from driveway. Vehicle recovered 3 days later with interior damage.",
+    "Flood damage from heavy rainfall. Water entered interior, engine compartment affected.",
+]
+_LIABILITY_NARRATIVES = [
+    "Insured at fault in collision with third party. Third party filing injury and property damage claim.",
+    "Insured reversed into pedestrian in parking lot. Minor injury reported. Third-party medical claim filed.",
+    "Insured ran red light and struck another vehicle. Liability clear per police report.",
+]
+_PIP_NARRATIVES = [
+    "Insured and passenger sustained injuries in collision. PIP claim filed for medical expenses and lost wages.",
+    "Insured sustained whiplash in rear-end collision. Physical therapy prescribed. PIP coverage applies.",
+    "Passenger sustained soft tissue injuries. Insured filing PIP for medical treatment received.",
+]
+_UM_NARRATIVES = [
+    "Insured struck by uninsured driver who fled the scene. Police report filed. UM coverage applies.",
+    "Insured involved in hit-and-run. Uninsured motorist coverage invoked per policy terms.",
+]
+
+_ADJUSTER_NOTES_TEMPLATES = [
+    "Initial inspection completed. Estimate obtained from preferred repair facility. Photos documented in claim file.",
+    "Third-party appraisal ordered. Waiting on medical records for injury component. Reserves adjusted.",
+    "Subrogation potential identified — other party may be at fault. SIU referral not warranted at this time.",
+    "Customer cooperative. Documentation complete. Claim straightforward per initial review.",
+    "Rental authorized per policy terms. Repair timeline estimated at 7-10 business days.",
+    "Independent medical exam (IME) ordered given extended treatment duration.",
+    "Police report obtained. Corroborates insured's account. Proceeding to payment.",
+    "Customer submitted repair receipts. Within estimated range. Approved for payment.",
+]
+
+# Fraud-specific adjuster notes
+_FRAUD_ADJUSTER_NOTES = [
+    "Claim flagged by automated system for review. Multiple signals identified — refer to SIU.",
+    "SIU referral initiated. Claim frequency inconsistent with driving profile. Escalating.",
+    "Telematics data inconsistent with reported incident date/location. Further investigation required.",
+    "Policy recently reinstated before claim date. Timing anomaly noted. SIU notified.",
+    "Claim amount significantly exceeds vehicle ACV. Independent appraisal ordered.",
+]
+
+# Fraud signal combinations that are internally consistent
+_FRAUD_SIGNAL_COMBOS = [
+    ["claim_delta_high", "recent_policy_reinstatement"],
+    ["claim_delta_high", "telematics_anomaly", "frequency_spike"],
+    ["telematics_anomaly", "incident_location_mismatch"],
+    ["frequency_spike", "rapid_refiling"],
+    ["claim_delta_high", "staged_accident_pattern", "third_party_attorney_early"],
+    ["telematics_anomaly", "claim_filed_after_lapse_reinstatement"],
+    ["frequency_spike", "claim_delta_high"],
+    ["staged_accident_pattern", "no_police_report", "multiple_claimants"],
+]
 
 
-def generate(count: int, config: dict, states_data: dict) -> list[dict]:
+def _pick_claim_type(policy: dict, state_rules: dict) -> str:
     """
-    Generate claim records.
-
-    Args:
-        count: Number of customers
-        config: Configuration dict (fraud_rate, coverage_rules)
-        states_data: State rules dictionary
-
-    Returns:
-        List of claim records
+    Pick a claim type that matches the policy's active coverages.
+    No-fault states bias toward PIP.
     """
-    fake = Faker("en_US")
-    Faker.seed(42)
-    random.seed(42)
+    available = []
+    coverages = policy.get("coverages", {})
 
-    fraud_rate = config.get("fraud_rate", 0.04)
+    if coverages.get("collision", {}).get("included"):
+        available.extend(["collision"] * 3)
+    if coverages.get("comprehensive", {}).get("included"):
+        available.extend(["comprehensive"] * 2)
+    if coverages.get("liability", {}).get("included"):
+        available.extend(["liability"] * 2)
+    if coverages.get("pip", {}).get("included"):
+        weight = 4 if state_rules.get("pip_required") else 1
+        available.extend(["pip"] * weight)
+    if coverages.get("uninsured_motorist", {}).get("included"):
+        available.extend(["uninsured_motorist"] * 1)
 
-    # Load policies
-    data_dir = Path(__file__).parent.parent.parent / "data"
-    try:
-        with open(data_dir / "policies.json") as f:
-            policies = json.load(f)
-    except FileNotFoundError:
-        return []
+    if not available:
+        available = ["collision"]  # fallback
 
-    claim_types = [
-        "collision",
-        "comprehensive",
-        "liability",
-        "pip",
-        "uninsured_motorist",
-    ]
+    return random.choice(available)
 
-    # Fraud signal types
-    fraud_signals_list = [
-        ["claim_delta_high"],
-        ["frequency_spike"],
-        ["telematics_anomaly"],
-        ["rapid_refiling"],
-        ["claim_delta_high", "frequency_spike"],
-        ["claim_delta_high", "telematics_anomaly"],
+
+def _narrative_for_type(claim_type: str) -> str:
+    templates = {
+        "collision": _COLLISION_NARRATIVES,
+        "comprehensive": _COMPREHENSIVE_NARRATIVES,
+        "liability": _LIABILITY_NARRATIVES,
+        "pip": _PIP_NARRATIVES,
+        "uninsured_motorist": _UM_NARRATIVES,
+    }
+    return random.choice(templates.get(claim_type, _COLLISION_NARRATIVES))
+
+
+def _claim_amount_for_type(claim_type: str, is_fraud: bool) -> float:
+    """
+    Realistic claim amounts by type. Fraud claims skew higher.
+    """
+    ranges = {
+        "collision": (1500, 18000),
+        "comprehensive": (800, 12000),
+        "liability": (3000, 35000),
+        "pip": (1000, 20000),
+        "uninsured_motorist": (5000, 40000),
+    }
+    lo, hi = ranges.get(claim_type, (1000, 10000))
+    if is_fraud:
+        # Fraud claims inflate by 30-80%
+        lo = int(lo * 1.3)
+        hi = int(hi * 1.8)
+
+    # Log-normal distribution within range for realism
+    mid = (lo + hi) / 2
+    std = (hi - lo) / 6
+    amount = random.gauss(mid, std)
+    return round(max(lo, min(hi, amount)), 2)
+
+
+def generate(count: int, config: dict, states_data: dict,
+             policies: list[dict] | None = None) -> list[dict]:
+    """
+    Generate claims. `count` is the number of policies (controls claim volume).
+    If `policies` is None, loads from data/policies.json.
+    """
+    if policies is None:
+        policies_path = Path("data/policies.json")
+        if not policies_path.exists():
+            raise FileNotFoundError("data/policies.json not found. Run policy_gen.py first.")
+        policies = json.loads(policies_path.read_text())
+
+    coverage_rules = config["coverage_rules"]
+    claim_rate = coverage_rules.get("claim_rate_per_policy", 0.28)
+    fraud_rate = config.get("fraud_rate", coverage_rules.get("fraud_rate", 0.04))
+
+    # Build a lookup of policies that are eligible to have claims
+    eligible_policies = [
+        p for p in policies
+        if p["status"] not in ("cancelled",)
     ]
 
     records = []
-    claim_counter = 0
+    claim_n = 1
 
-    # 30% of policies get at least 1 claim
-    policies_with_claims = random.sample(policies, int(len(policies) * 0.30))
+    for policy in eligible_policies:
+        # Decide how many claims this policy has
+        if random.random() > claim_rate:
+            continue  # No claims for this policy
 
-    for policy in policies_with_claims:
-        # 1-3 claims per policy
-        num_claims = random.randint(1, 3)
+        n_claims = 1
+        if random.random() < 0.12:  # 12% of claiming policies have 2+ claims
+            n_claims = 2
+        if random.random() < 0.03:  # 3% have 3 claims
+            n_claims = 3
 
-        for _ in range(num_claims):
-            claim_counter += 1
-            claim_id = f"CLM-{claim_counter:05d}"
-            policy_number = policy["policy_number"]
-            customer_id = policy["customer_id"]
-            state = policy["state"]
+        state = policy["state"]
+        state_rules = states_data.get(state, {})
 
-            # Claim type
-            claim_type = random.choice(claim_types)
-
-            # Is fraud?
+        for _ in range(n_claims):
             is_fraud = random.random() < fraud_rate
-            fraud_signals = random.choice(fraud_signals_list) if is_fraud else []
+            claim_type = _pick_claim_type(policy, state_rules)
+            claim_amount = _claim_amount_for_type(claim_type, is_fraud)
 
-            # Dates
-            days_back = random.randint(10, 180)
-            incident_date = (datetime.now() - timedelta(days=days_back)).date().isoformat()
-            filed_date = (
-                (datetime.fromisoformat(incident_date) + timedelta(days=random.randint(0, 5)))
-                .date()
-                .isoformat()
+            # Incident date within policy effective period, not in future
+            try:
+                eff = date.fromisoformat(policy["effective_date"])
+                exp = date.fromisoformat(policy["expiry_date"])
+            except (ValueError, KeyError):
+                eff = date.today() - timedelta(days=365)
+                exp = date.today()
+
+            end = min(exp, date.today())
+            if eff >= end:
+                eff = end - timedelta(days=180)
+
+            incident_date = fake.date_between(start_date=eff, end_date=end)
+
+            # Filing lag: 0-60 days, fraud claims sometimes filed faster (urgency signal)
+            if is_fraud:
+                lag_days = random.choices([0, 1, 2], weights=[40, 35, 25])[0]
+            else:
+                lag_days = random.choices(
+                    range(0, 61), weights=[max(1, 60 - i) for i in range(61)]
+                )[0]
+            filed_date = incident_date + timedelta(days=lag_days)
+
+            # Claim status
+            if policy["status"] == "lapsed":
+                status_choices = ["denied"] * 4 + ["under_review"] * 1
+            else:
+                status_choices = (
+                    ["open"] * 15 + ["under_review"] * 20 +
+                    ["approved"] * 25 + ["settled"] * 35 + ["denied"] * 5
+                )
+            status = random.choice(status_choices)
+
+            # Settlement — only for approved/settled claims
+            settlement_amount = None
+            if status in ("approved", "settled"):
+                # Settlement is 70-95% of claim amount (deductible + negotiation)
+                ratio = random.uniform(0.70, 0.95)
+                settlement_amount = round(claim_amount * ratio, 2)
+
+            # Fraud signals
+            fraud_signals: list[str] = []
+            if is_fraud:
+                fraud_signals = list(random.choice(_FRAUD_SIGNAL_COMBOS))
+
+            adjuster_notes = (
+                random.choice(_FRAUD_ADJUSTER_NOTES) if is_fraud
+                else random.choice(_ADJUSTER_NOTES_TEMPLATES)
             )
 
-            # Claim amount (fraud claims tend to be higher)
-            if is_fraud:
-                claim_amount = random.randint(15000, 50000)
-            else:
-                claim_amount = random.randint(1000, 15000)
-
-            # Settlement amount (80% of claims are approved/settled)
-            if random.random() < 0.80:
-                settlement_amount = claim_amount * random.uniform(0.7, 1.0)
-                status = random.choice(["approved", "settled"])
-            else:
-                settlement_amount = None
-                status = random.choice(["denied", "under_review"])
-
-            # Narratives
-            adjuster_notes = fake.sentence(nb_words=10)
-            incident_narrative = fake.paragraph(nb_sentences=3)
-
             record = {
-                "claim_id": claim_id,
-                "policy_number": policy_number,
-                "customer_id": customer_id,
+                "claim_id": f"CLM-{claim_n:05d}",
+                "policy_number": policy["policy_number"],
+                "customer_id": policy["customer_id"],
                 "state": state,
-                "incident_date": incident_date,
-                "filed_date": filed_date,
+                "incident_date": incident_date.isoformat(),
+                "filed_date": filed_date.isoformat(),
                 "claim_type": claim_type,
                 "status": status,
                 "claim_amount": claim_amount,
-                "settlement_amount": round(settlement_amount, 2) if settlement_amount else None,
+                "settlement_amount": settlement_amount,
                 "adjuster_notes": adjuster_notes,
-                "incident_narrative": incident_narrative,
+                "incident_narrative": _narrative_for_type(claim_type),
                 "is_fraud": is_fraud,
                 "fraud_signals": fraud_signals,
                 "source": "synthetic-v1",
             }
             records.append(record)
+            claim_n += 1
 
+    validate_records(records, "claim.schema.json")
     return records
 
 
 def main(count: int, output_path: Path, config: dict, states_data: dict) -> None:
-    """
-    Generate and write claim records.
-
-    Args:
-        count: Number of customers
-        output_path: Path to write JSON file
-        config: Configuration dictionary
-        states_data: State rules dictionary
-    """
     records = generate(count, config, states_data)
-
-    # Write output
+    fraud_count = sum(1 for r in records if r["is_fraud"])
+    fraud_pct = fraud_count / max(len(records), 1) * 100
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(records, f, indent=2, default=str)
-
-    print(f"[claim.json] wrote {len(records):,} records → {output_path}")
+    print(
+        f"[claim_gen] wrote {len(records):,} records → {output_path} "
+        f"({fraud_count} fraud, {fraud_pct:.1f}%)"
+    )
 
 
 if __name__ == "__main__":
     config_dir = Path(__file__).parent.parent / "config"
     states_data = json.loads((config_dir / "states.json").read_text())
-    config = {"fraud_rate": 0.04}
-
-    data_dir = Path(__file__).parent.parent.parent / "data"
-    main(100, data_dir / "claims.json", config, states_data)
+    coverage_rules = json.loads((config_dir / "coverage_rules.json").read_text())
+    main(
+        count=1000,
+        output_path=Path("data/claims.json"),
+        config={"coverage_rules": coverage_rules, "fraud_rate": 0.04},
+        states_data=states_data,
+    )

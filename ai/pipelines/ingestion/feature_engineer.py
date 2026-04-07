@@ -84,7 +84,7 @@ def churn_features(engine=None) -> pd.DataFrame:
             cust.credit_score,
             COUNT(p.policy_number)                                 AS policy_count,
             AVG(p.premium_annual)                                  AS avg_premium,
-            AVG(p.drive_score)                                     AS avg_drive_score,
+            COALESCE(AVG(p.drive_score), 50)                       AS avg_drive_score,
             COUNT(c.claim_id)                                      AS total_claims,
             MAX(CASE WHEN p.status = 'active' THEN 1 ELSE 0 END)  AS has_active_policy
         FROM customers cust

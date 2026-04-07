@@ -1,11 +1,44 @@
 {
   "coverage_types": ["liability", "collision", "comprehensive", "pip", "uninsured_motorist", "gap", "roadside"],
   "deductible_options": [250, 500, 1000, 2500],
-  "liability_limits": ["15/30/5", "25/50/10", "50/100/25", "100/300/50", "250/500/100"],
+  "liability_limits": [
+    "15/30/5", "25/50/10", "30/60/25", "50/100/25", "100/300/50", "250/500/100"
+  ],
   "drive_score_discount_tiers": [
     {"min": 90, "discount_pct": 0.15},
     {"min": 75, "discount_pct": 0.08},
     {"min": 60, "discount_pct": 0.03},
     {"min": 0,  "discount_pct": 0.00}
-  ]
+  ],
+  "vehicle_makes_models": [
+    {"make": "Toyota",     "models": ["Camry", "Corolla", "RAV4", "Tacoma", "Highlander", "Prius", "4Runner"]},
+    {"make": "Ford",       "models": ["F-150", "Explorer", "Escape", "Mustang", "Edge", "Bronco", "Maverick"]},
+    {"make": "Chevrolet",  "models": ["Silverado", "Equinox", "Malibu", "Traverse", "Colorado", "Tahoe", "Blazer"]},
+    {"make": "Honda",      "models": ["Civic", "Accord", "CR-V", "Pilot", "Odyssey", "HR-V", "Ridgeline"]},
+    {"make": "Nissan",     "models": ["Altima", "Rogue", "Sentra", "Pathfinder", "Murano", "Frontier", "Versa"]},
+    {"make": "Jeep",       "models": ["Grand Cherokee", "Wrangler", "Cherokee", "Compass", "Gladiator", "Renegade"]},
+    {"make": "Ram",        "models": ["1500", "2500", "ProMaster", "1500 Classic"]},
+    {"make": "GMC",        "models": ["Sierra 1500", "Terrain", "Acadia", "Canyon", "Yukon", "Envoy"]},
+    {"make": "Hyundai",    "models": ["Elantra", "Tucson", "Santa Fe", "Sonata", "Kona", "Palisade"]},
+    {"make": "Kia",        "models": ["Sorento", "Sportage", "Forte", "Soul", "Telluride", "Seltos"]},
+    {"make": "Subaru",     "models": ["Outback", "Forester", "Crosstrek", "Impreza", "Ascent", "Legacy"]},
+    {"make": "Tesla",      "models": ["Model 3", "Model Y", "Model S", "Model X"]},
+    {"make": "Volkswagen", "models": ["Jetta", "Tiguan", "Atlas", "Passat", "Golf", "ID.4"]},
+    {"make": "BMW",        "models": ["3 Series", "5 Series", "X3", "X5", "7 Series", "X1"]},
+    {"make": "Mercedes-Benz", "models": ["C-Class", "E-Class", "GLC", "GLE", "A-Class", "GLA"]},
+    {"make": "Dodge",      "models": ["Charger", "Challenger", "Durango", "Grand Caravan"]},
+    {"make": "Mazda",      "models": ["CX-5", "Mazda3", "CX-9", "CX-30", "Mazda6"]},
+    {"make": "Lexus",      "models": ["RX", "NX", "ES", "IS", "GX", "UX"]},
+    {"make": "Buick",      "models": ["Enclave", "Encore", "Envision", "LaCrosse"]},
+    {"make": "Cadillac",   "models": ["Escalade", "XT5", "CT5", "XT4", "XT6"]}
+  ],
+  "base_premium_ranges": {
+    "low_risk":    {"min": 800,  "max": 1400},
+    "medium_risk": {"min": 1200, "max": 2200},
+    "high_risk":   {"min": 1800, "max": 3500}
+  },
+  "telematics_enrollment_rate": 0.62,
+  "multi_policy_rate": 0.15,
+  "claim_rate_per_policy": 0.28,
+  "fraud_rate": 0.04
 }

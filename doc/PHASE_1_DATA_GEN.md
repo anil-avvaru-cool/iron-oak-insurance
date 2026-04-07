@@ -1,9 +1,9 @@
 # Phase 1 — Repository Bootstrap, Toolchain & Data Generation
 
 **Git tag:** `v0.1.0`  
-**Deliverable:** `uv run python data-gen/generators/run_all.py` produces a complete local dataset.
+**Deliverable:** `uv run python data-gen/generators/run_all.py` produces a complete local dataset across all five layers.
 
-**Meetup demo:** Run `run_all.py` live, inspect JSON records, open a generated PDF, show how state rules differ between TX and MI.
+**Meetup demo:** Run `run_all.py` live, inspect JSON records, open a generated PDF, show how state rules differ between TX and MI, demonstrate `verify_all.py` catching a data quality issue.
 
 ---
 
@@ -13,9 +13,37 @@
 2. [Toolchain & Dependency Management](#2-toolchain--dependency-management)
 3. [Config Files](#3-config-files)
 4. [JSON Schemas](#4-json-schemas)
-5. [Generator Contracts](#5-generator-contracts)
-6. [run_all.py — Entry Point](#6-run_allpy--entry-point)
-7. [Verification & Git Tag](#7-verification--git-tag)
+5. [Shared Validator](#5-shared-validator)
+6. [Generator Implementations](#6-generator-implementations)
+   - 6.1 [customer_gen.py](#61-customer_genpy)
+   - 6.2 [policy_gen.py](#62-policy_genpy)
+   - 6.3 [claim_gen.py](#63-claim_genpy)
+   - 6.4 [telematics_gen.py](#64-telematics_genpy)
+   - 6.5 [document_gen.py](#65-document_genpy)
+   - 6.6 [faq_gen.py (Phase 4 stub)](#66-faq_genpy-phase-4-stub)
+7. [run_all.py — Entry Point](#7-run_allpy--entry-point)
+8. [Data Verification](#8-data-verification)
+   - 8.1 [verify_customers.py](#81-verify_customerspy)
+   - 8.2 [verify_policies.py](#82-verify_policiespy)
+   - 8.3 [verify_claims.py](#83-verify_claimspy)
+   - 8.4 [verify_telematics.py](#84-verify_telematicspy)
+   - 8.5 [verify_documents.py](#85-verify_documentspy)
+   - 8.6 [verify_all.py](#86-verify_allpy)
+9. [Verification & Git Tag](#9-verification--git-tag)
+
+---
+
+## Design Decisions This Phase
+
+| Decision | Rationale |
+|---|---|
+| No default env values | `EnvironmentError` raised immediately on missing config — no silent failures in production |
+| `validate_records()` called inside every generator | Drift between generator logic and schema is caught at generation time, not at DB load time |
+| `drive_score=null` for non-telematics customers | Not a missing value — a valid business state. Telematics generator explicitly skips null-score policies |
+| Verification as separate Python files | Each verifier runs standalone (`python verify_customers.py`) or via `verify_all.py`; no test framework required |
+| Filename convention load-bearing | `decl_`, `claim_letter_`, `renewal_` prefixes used by `chunk_router.py` in Phase 4 — do not rename |
+| All 7 coverage keys always present | `required` always emitted (never omitted for optional coverages) — required by Phase 3 JSONB queries |
+| Coverage elections depend on vehicle age | Older vehicles less likely to carry collision/comprehensive — realistic policyholder behavior |
 
 ---
 
@@ -38,8 +66,6 @@ git branch -M main
 ```
 
 ### 1.2 Full Folder Structure
-
-Create all directories up front so imports never fail and Git tags are clean.
 
 ```bash
 # Linux / macOS
@@ -75,25 +101,29 @@ data/
 documents/
 faqs/
 
-# Environment
+# Environment — no values committed
 .env
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
-
-# uv
 .venv/
-uv.lock        # commit this if sharing exact reproducible builds
+
+# uv lockfile — commit this for reproducible builds
+# uv.lock
 
 # AWS CDK
 infra/cdk/cdk.out/
 infra/cdk/node_modules/
 
-# Models cached locally
+# Cached models
 .cache/
 *.pt
 *.onnx
+ai/models/**/*.json
+ai/models/**/fairness_reports/
 ```
 
 **`.env.example`** — committed, no values
@@ -103,17 +133,17 @@ AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_DEFAULT_REGION=us-east-1
 
-# Bedrock
+# Bedrock model IDs
 BEDROCK_MODEL_ID_SONNET=anthropic.claude-sonnet-4-6
 BEDROCK_MODEL_ID_HAIKU=anthropic.claude-haiku-4-5-20251001
 BEDROCK_EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
 
-# Database
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=aioi
-DB_USER=aioi
-DB_PASSWORD=aioi_local
+# Database — no defaults; all required
+DB_HOST=
+DB_PORT=
+DB_NAME=
+DB_USER=
+DB_PASSWORD=
 
 # API
 API_HOST=0.0.0.0
@@ -123,9 +153,12 @@ API_PORT=8000
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_EMBED_MODEL=all-minilm:l6-v2
+
+# Logging
+LOG_LEVEL=INFO
 ```
 
-> **Flag:** `requirements.txt` at the repo root is a generated export artifact (see Section 2.4), not the source of truth. The source of truth is `pyproject.toml`.
+> **No default values policy:** `.env.example` has intentionally blank values. Any code that reads env vars must call `_require_env("VAR_NAME")` — a helper that raises `EnvironmentError` immediately rather than silently using a wrong value. This prevents the failure mode where a misconfigured deploy connects to the wrong database unnoticed.
 
 ---
 
@@ -139,7 +172,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ```powershell
-# Windows (PowerShell)
+# Windows
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
@@ -149,10 +182,8 @@ Verify: `uv --version`
 
 ```bash
 uv init --no-workspace
-uv python pin 3.13   #  Use latest version
+uv python pin 3.13
 ```
-
-This creates `pyproject.toml`. Edit it:
 
 **`pyproject.toml`**
 ```toml
@@ -161,31 +192,34 @@ name = "iron-oak-insurance"
 version = "0.1.0"
 description = "AIOI AI Strategy & Data Platform"
 requires-python = ">=3.11"
-dependencies = []   # populated per phase below
+dependencies = []
 
 [dependency-groups]
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
-  "httpx>=0.27",       # FastAPI test client
-  "ruff>=0.4",         # linter + formatter
+  "httpx>=0.27",
+  "ruff>=0.4",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
 ```
 
 ### 2.3 Dependencies by Phase
-
-Add dependencies as each phase is built — do not front-load all packages.
 
 **Phase 1 — Data Generation**
 ```bash
 uv add faker python-dateutil reportlab Pillow tqdm jsonschema
 ```
-
-> **Note:** `jsonschema` is added in Phase 1 (not in the original plan) because every generator validates output against its schema before writing. It is a zero-cost addition with no downstream impact.
 
 **Phase 2 — Database**
 ```bash
@@ -195,13 +229,12 @@ uv add psycopg2-binary sqlalchemy alembic python-dotenv
 **Phase 3 — ML Models**
 ```bash
 uv add xgboost scikit-learn pandas numpy fastapi uvicorn mangum
-# mangum = Lambda adapter for FastAPI
 ```
 
 **Phase 4 — RAG Pipeline**
 ```bash
 uv add sentence-transformers pgvector PyMuPDF langchain-community \
-       langchain-postgres openai   # openai client used as Ollama-compatible interface
+       langchain-postgres openai
 ```
 
 **Phase 5 — Bedrock Agents**
@@ -211,446 +244,551 @@ uv add boto3 aws-cdk-lib constructs
 
 ### 2.4 Generate requirements.txt for Docker
 
-After each phase, regenerate so Docker builds stay in sync:
-
 ```bash
 uv export --no-dev --format requirements-txt > requirements.txt
 ```
 
-Commit `requirements.txt` alongside `pyproject.toml`. Docker's `pip install -r requirements.txt` uses this file; local development uses `uv sync`.
+> Never edit `requirements.txt` by hand. It is a generated artifact from `pyproject.toml`.
 
 ### 2.5 Virtual Environment
 
 ```bash
-uv sync          # creates .venv, installs all declared deps
-source .venv/bin/activate          # Linux / macOS
-.venv\Scripts\activate             # Windows
-```
-
-### 2.6 Linting & Formatting
-
-```bash
-uv run ruff check .     # lint
-uv run ruff format .    # format
-```
-
-Add to `pyproject.toml`:
-```toml
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = ["E", "F", "I"]   # pycodestyle, pyflakes, isort
+uv sync
+source .venv/bin/activate       # Linux / macOS
+.venv\Scripts\activate          # Windows
 ```
 
 ---
 
 ## 3. Config Files
 
-### `data-gen/config/states.json` — structure (excerpt)
+### `data-gen/config/states.json`
 
-```json
-{
-  "TX": {
-    "weight": 9,
-    "no_fault": false,
-    "min_liability": {"bodily_injury_per_person": 30000, "bodily_injury_per_accident": 60000, "property_damage": 25000},
-    "uninsured_motorist_required": false,
-    "total_loss_threshold": 1.00,
-    "pip_required": false,
-    "pip_limit": null,
-    "claims_ack_days": 15,
-    "claims_settle_days": 30
-  },
-  "MI": {
-    "weight": 4,
-    "no_fault": true,
-    "min_liability": {"bodily_injury_per_person": 50000, "bodily_injury_per_accident": 100000, "property_damage": 10000},
-    "uninsured_motorist_required": false,
-    "total_loss_threshold": 0.75,
-    "pip_required": true,
-    "pip_limit": 500000,
-    "claims_ack_days": 10,
-    "claims_settle_days": 30
-  },
-  "PA": {
-    "weight": 5,
-    "no_fault": true,
-    "min_liability": {"bodily_injury_per_person": 15000, "bodily_injury_per_accident": 30000, "property_damage": 5000},
-    "uninsured_motorist_required": false,
-    "total_loss_threshold": 0.75,
-    "pip_required": true,
-    "pip_limit": 5000,
-    "claims_ack_days": 15,
-    "claims_settle_days": 30
-  }
-}
-```
+Complete configuration for all 50 states + DC. Each entry includes:
 
-> Suggested weight scale: 1–10, where CA/TX/FL get 9–10, mid-size states (PA, OH, IL) get 5–7, and low-population states (WY, ND, VT) get 1. This maps roughly to US vehicle registration distribution.  
-> All 50 states + DC must be present. The `weight` field is read by `customer_gen.py` for population distribution.
+| Field | Description |
+|---|---|
+| `weight` | Population weight 1–10 for customer state assignment |
+| `no_fault` | Boolean — drives PIP requirement and claim behavior |
+| `min_liability` | State-mandated minimum liability limits |
+| `uninsured_motorist_required` | Boolean — drives UM coverage requirement |
+| `total_loss_threshold` | Fraction of ACV at which vehicle is declared total loss |
+| `pip_required` | Boolean — if true, every policy in this state has pip.required=true |
+| `pip_limit` | PIP benefit limit in dollars (null for non-PIP states) |
+| `claims_ack_days` | State-mandated claim acknowledgment window |
+| `claims_settle_days` | State-mandated settlement window |
 
-### `data-gen/config/coverage_rules.json` — structure
+No-fault states (pip_required=true): **DE, FL, HI, KS, KY, MA, MI, MN, NJ, ND, NY, PA, UT**
 
-```json
-{
-  "coverage_types": ["liability", "collision", "comprehensive", "pip", "uninsured_motorist", "gap", "roadside"],
-  "deductible_options": [250, 500, 1000, 2500],
-  "liability_limits": ["15/30/5", "25/50/10", "50/100/25", "100/300/50", "250/500/100"],
-  "drive_score_discount_tiers": [
-    {"min": 90, "discount_pct": 0.15},
-    {"min": 75, "discount_pct": 0.08},
-    {"min": 60, "discount_pct": 0.03},
-    {"min": 0,  "discount_pct": 0.00}
-  ]
-}
-```
+UM-required states: **CT, IL, KS, MA, ME, MD, MN, MO, NC, NE, NJ, NY, OR, RI, SC, SD, VA, VT, WA, WI, WV, DC**
+
+### `data-gen/config/coverage_rules.json`
+
+Key fields:
+
+| Field | Description |
+|---|---|
+| `coverage_types` | Canonical list of 7 coverage types — every policy has all 7 keys |
+| `deductible_options` | [250, 500, 1000, 2500] |
+| `vehicle_makes_models` | 20 realistic make/model combinations with population weighting |
+| `telematics_enrollment_rate` | Default 0.62 — ~62% of policies are telematics-enrolled |
+| `multi_policy_rate` | Default 0.15 — ~15% of customers have a second policy |
+| `base_premium_ranges` | Low/medium/high risk premium ranges for realistic premium distribution |
 
 ---
 
 ## 4. JSON Schemas
 
-All schemas live in `data-gen/schemas/`. Every generator validates output against its schema before writing.
+All schemas live in `data-gen/schemas/`. Every generator validates output against its schema before writing to disk.
 
-### `customer.schema.json`
+### Schema design rules
 
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["customer_id","first_name","last_name","state","zip","email","dob","created_at","source"],
-  "properties": {
-    "customer_id":  {"type": "string", "pattern": "^CUST-[0-9]{4,6}$"},
-    "first_name":   {"type": "string"},
-    "last_name":    {"type": "string"},
-    "state":        {"type": "string", "minLength": 2, "maxLength": 2},
-    "zip":          {"type": "string", "pattern": "^[0-9]{5}$"},
-    "email":        {"type": "string", "format": "email"},
-    "dob":          {"type": "string", "format": "date"},
-    "credit_score": {"type": "integer", "minimum": 300, "maximum": 850},
-    "created_at":   {"type": "string", "format": "date-time"},
-    "source":       {"type": "string", "const": "synthetic-v1"}
-  }
-}
-```
+- `additionalProperties: false` on all top-level objects and nested sub-schemas — prevents field drift
+- `required` field always emitted on coverage objects (never omitted for optional coverages)
+- `email` and `drive_score` allow `null` — these are valid business states, not missing data
+- VIN length fixed at exactly 17 characters
+- All `source` fields use `"const": "synthetic-v1"` for governance tagging
 
-### `policy.schema.json`
+### `customer.schema.json` — key fields
 
-The `vehicle` and `coverages` fields are fully typed with inline sub-schemas. This contract is load-bearing: Phase 2's `load_json.py` serializes both to JSONB, and Phase 3's feature engineering queries them directly (`vehicle->>'year'`, `vehicle->>'make'`, `coverages->'pip'->'required'`). The sub-schemas here must match exactly what those queries expect.
+| Field | Type | Notes |
+|---|---|---|
+| `customer_id` | string | Pattern `^CUST-[0-9]{5,6}$` |
+| `email` | string\|null | ~3% of customers have no email |
+| `dob` | date | Adults 18–85 |
+| `credit_score` | integer\|null | 300–850 |
 
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["policy_number","customer_id","state","effective_date","expiry_date","status","coverages","vehicle","premium_annual","source"],
-  "properties": {
-    "policy_number":   {"type": "string", "pattern": "^[A-Z]{2}-[0-9]{5}$"},
-    "customer_id":     {"type": "string"},
-    "state":           {"type": "string"},
-    "effective_date":  {"type": "string", "format": "date"},
-    "expiry_date":     {"type": "string", "format": "date"},
-    "status":          {"type": "string", "enum": ["active","lapsed","cancelled","pending_renewal"]},
-    "premium_annual":  {"type": "number", "minimum": 0},
-    "drive_score":     {"type": ["number","null"], "minimum": 0, "maximum": 100},
-    "agent_id":        {"type": "string"},
-    "source":          {"type": "string", "const": "synthetic-v1"},
+### `policy.schema.json` — sub-schema design
 
-    "vehicle": {
-      "type": "object",
-      "required": ["make", "model", "year", "vin"],
-      "additionalProperties": false,
-      "properties": {
-        "make":  {"type": "string"},
-        "model": {"type": "string"},
-        "year":  {"type": "integer", "minimum": 1990, "maximum": 2026},
-        "vin":   {"type": "string", "minLength": 17, "maxLength": 17}
-      }
-    },
+**`vehicle` sub-schema:** `additionalProperties: false` with `year` range 1990–2026 and VIN exactly 17 characters.
 
-    "coverages": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "required": ["included"],
-        "additionalProperties": false,
-        "properties": {
-          "included":   {"type": "boolean"},
-          "deductible": {"type": ["integer", "null"]},
-          "limit":      {"type": ["string", "null"]},
-          "required":   {"type": "boolean"},
-          "pip_limit":  {"type": ["integer", "null"]}
-        }
-      },
-      "propertyNames": {
-        "enum": ["liability","collision","comprehensive","pip","uninsured_motorist","gap","roadside"]
-      }
-    }
-  }
-}
-```
+**`coverages` sub-schema:** All 7 coverage keys enumerated in `propertyNames.enum`. Each coverage object has:
+- `included` (boolean, required)
+- `required` (boolean, required — **never omitted**)
+- `deductible` (integer|null)
+- `limit` (string|null)
+- `pip_limit` (integer|null)
 
-**Sub-schema design notes:**
+> **Flag for Phase 3:** The JSONB query `coverages->'pip'->'required'` in schema verification depends on `required` being present on every pip object. Generator enforces this: `required` is always emitted as `false` for optional coverages.
 
-`vehicle` — uses `additionalProperties: false` to prevent drift between the generator and downstream JSONB queries. The `year` range (1990–2026) covers the full realistic fleet without allowing test noise. `vin` length is fixed at 17 to match the North American standard.
+### `claim.schema.json` — key constraint
 
-`coverages` — uses `additionalProperties` as the value schema (standard JSON Schema map pattern) so the set of allowed coverage keys is controlled by `propertyNames.enum`, which mirrors `coverage_rules.json`'s `coverage_types` list exactly. When a new coverage type is added to config, updating one enum in this schema keeps both in sync. The `pip_limit` field is included at the coverage level (in addition to the state-level `pip_limit` in `states.json`) to support per-policy PIP elections in no-fault states where customers can choose benefit levels.
+`filed_date >= incident_date` is enforced in the generator and verified by `verify_claims.py`. The schema validates types; the verifier validates the date ordering constraint.
 
-**Coverage key presence rules enforced by `policy_gen.py` (not the schema):**
+### `telematics.schema.json` — enrollment model
 
-| State rule | Generator behavior |
-|---|---|
-| `pip_required: true` (MI, FL, NY, NJ, PA) | `pip` key present with `included: true`, `required: true`, `pip_limit` set from `states.json` |
-| `uninsured_motorist_required: true` | `uninsured_motorist` key present with `included: true`, `required: true` |
-| All other coverages | `included` reflects customer election; `required: false` |
-
-> **Note**: `policy_gen.py` now generates coverage entries with `included`, `required`, `deductible`, `limit`, and `pip_limit` to match `policy.schema.json` contract. The older `enabled` field is no longer used.
-
-> **Flag for Phase 3:** The `coverages->'pip'->'required'` JSONB query in `db/schema.sql` verification depends on the `required` boolean being present on every `pip` object. Ensure `policy_gen.py` always emits `required` (even as `false`) for all coverage objects — do not omit it for optional coverages.
-
-### `claim.schema.json`
-
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["claim_id","policy_number","customer_id","state","incident_date","filed_date","claim_type","status","is_fraud","source"],
-  "properties": {
-    "claim_id":        {"type": "string", "pattern": "^CLM-[0-9]{4,6}$"},
-    "policy_number":   {"type": "string"},
-    "customer_id":     {"type": "string"},
-    "state":           {"type": "string"},
-    "incident_date":   {"type": "string", "format": "date"},
-    "filed_date":      {"type": "string", "format": "date"},
-    "claim_type":      {"type": "string", "enum": ["collision","comprehensive","liability","pip","uninsured_motorist"]},
-    "status":          {"type": "string", "enum": ["open","under_review","approved","denied","settled"]},
-    "claim_amount":    {"type": "number", "minimum": 0},
-    "settlement_amount": {"type": ["number","null"]},
-    "adjuster_notes":  {"type": "string"},
-    "incident_narrative": {"type": "string"},
-    "is_fraud":        {"type": "boolean"},
-    "fraud_signals":   {"type": "array", "items": {"type": "string"}},
-    "source":          {"type": "string", "const": "synthetic-v1"}
-  }
-}
-```
-
-### `telematics.schema.json`
-
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["trip_id","policy_number","customer_id","trip_date","distance_miles","duration_minutes","drive_score","source"],
-  "properties": {
-    "trip_id":           {"type": "string", "pattern": "^TRIP-[0-9]{6,8}$"},
-    "policy_number":     {"type": "string"},
-    "customer_id":       {"type": "string"},
-    "trip_date":         {"type": "string", "format": "date-time"},
-    "distance_miles":    {"type": "number", "minimum": 0},
-    "duration_minutes":  {"type": "number", "minimum": 0},
-    "hard_brakes":       {"type": "integer", "minimum": 0},
-    "rapid_accelerations": {"type": "integer", "minimum": 0},
-    "speeding_events":   {"type": "integer", "minimum": 0},
-    "night_driving_pct": {"type": "number", "minimum": 0, "maximum": 1},
-    "drive_score":       {"type": "number", "minimum": 0, "maximum": 100},
-    "source":            {"type": "string", "const": "synthetic-v1"}
-  }
-}
-```
+Only policies with `drive_score != null` generate trip records. Non-telematics customers have `drive_score=null` in their policy record and zero rows in telematics.json. This is not a data gap — it is the business model.
 
 ---
 
-## 5. Generator Contracts
+## 5. Shared Validator
 
-Each generator follows the same interface so `run_all.py` treats them uniformly:
-
-```python
-# Pattern for every generator
-def generate(count: int, config: dict, states_data: dict) -> list[dict]:
-    """Return a list of validated records."""
-    ...
-
-def main(count: int, output_path: Path, config: dict, states_data: dict) -> None:
-    records = generate(count, config, states_data)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump(records, f, indent=2, default=str)
-    print(f"[{output_path.name}] wrote {len(records):,} records → {output_path}")
-```
-
-**Schema validation helper** — shared by all generators:
+**`data-gen/generators/validate.py`**
 
 ```python
-# data-gen/generators/validate.py
+"""
+validate.py — shared schema validator for all AIOI generators.
+
+Usage:
+    from validate import validate_records
+    validate_records(records, "customer.schema.json")
+
+Raises ValueError with record index and JSON path on first violation.
+"""
 import json
 from pathlib import Path
 import jsonschema
 
 _schema_cache: dict = {}
+_SCHEMA_DIR = Path(__file__).parent.parent / "schemas"
+
 
 def validate_records(records: list[dict], schema_name: str) -> None:
-    """Validate a list of records against a named schema. Raises on first violation."""
     if schema_name not in _schema_cache:
-        schema_path = Path("data-gen/schemas") / schema_name
+        schema_path = _SCHEMA_DIR / schema_name
         _schema_cache[schema_name] = json.loads(schema_path.read_text())
     schema = _schema_cache[schema_name]
     for i, record in enumerate(records):
         try:
             jsonschema.validate(instance=record, schema=schema)
         except jsonschema.ValidationError as e:
-            raise ValueError(f"Record {i} failed {schema_name} validation: {e.message}") from e
+            raise ValueError(
+                f"Record {i} failed {schema_name} validation at "
+                f"'{'/'.join(str(p) for p in e.absolute_path)}': {e.message}"
+            ) from e
+
+
+def validate_record(record: dict, schema_name: str) -> None:
+    validate_records([record], schema_name)
 ```
 
-Each generator calls `validate_records(records, "policy.schema.json")` (or its own schema) before writing. This catches drift between generator logic and schema contract at generation time, not at load time.
-
-**Key generator notes:**
-
-- `customer_gen.py` — uses `Faker` with locale `en_US`. State assignment uses weighted random choice from `states.json` population weights. IDs: `CUST-{n:05d}`.
-
-- `policy_gen.py` — one policy per customer minimum; 15% of customers get a second policy. Reads `states.json` to set mandatory coverages. Policy number: `{STATE_CODE}-{n:05d}`.
-
-  **Coverage object construction rules** (must match the `coverages` sub-schema):
-  - Every policy emits all 7 coverage keys from `coverage_rules.json`'s `coverage_types` list.
-  - `liability` is always `included: true` (required in all states).
-  - For no-fault states (`pip_required: true`): `pip` is `included: true`, `required: true`, `pip_limit` set from `states.json`.
-  - For states where `uninsured_motorist_required: true`: `uninsured_motorist` is `included: true`, `required: true`.
-  - All other coverages set `included` by customer election; `required` is always emitted (as `false` for optional coverages — never omitted).
-  - `deductible` is drawn from `coverage_rules.json`'s `deductible_options` for applicable coverages; `null` for coverages where it does not apply (liability, roadside).
-  - `limit` for liability is drawn from `coverage_rules.json`'s `liability_limits`; `null` for non-liability coverages.
-
-  **Vehicle object construction rules** (must match the `vehicle` sub-schema):
-  - `make` and `model`: drawn from a realistic fleet list (Toyota/Camry, Ford/F-150, Honda/Civic, etc.).
-  - `year`: random integer in range 1990–2026, weighted toward recent years.
-  - `vin`: 17-character string generated with correct format (`[A-HJ-NPR-Z0-9]{17}`). Use `Faker`'s `vin()` or generate with a simple template — exactness matters for length, not checksum validation at this stage.
-
-- `claim_gen.py` — generates 1–3 claims per policy at a configurable rate (default: 30% of policies have at least one claim). Injects fraud signals at 3–5% rate: `["claim_delta_high", "frequency_spike", "telematics_anomaly", "rapid_refiling"]`. Adjuster notes and narratives generated via `Faker` sentence templates with claim-type-specific vocabulary.
-
-- `telematics_gen.py` — generates trips per policy proportional to policy age. Drive Score computed from component events: `100 - (hard_brakes * 2) - (rapid_accel * 1.5) - (speeding_events * 3) - (night_driving_pct * 10)`, clamped to `[0, 100]`.
-
-- `document_gen.py` — uses `reportlab` to produce PDFs. Three document types: `decl_{POLICY_NUMBER}.pdf`, `claim_letter_{CLAIM_ID}.pdf`, `renewal_{POLICY_NUMBER}.pdf`. Filename convention is load-bearing — `chunk_router.py` in Phase 4 uses it for document type detection without ML classification. Declaration pages must render the `coverages` object as a table with one row per coverage type, showing limit and deductible — this is what Phase 4's `chunk_declaration.py` will parse.
+Schema path is resolved relative to the validators file location — works regardless of which directory you run from.
 
 ---
 
-## 6. `run_all.py` — Entry Point
+## 6. Generator Implementations
+
+All generators follow the same interface contract:
 
 ```python
-"""
-run_all.py — single entry point for all data generation.
+def generate(count: int, config: dict, states_data: dict) -> list[dict]:
+    """Generate records, validate against schema, return list."""
+    ...
 
-Usage:
-  uv run python data-gen/generators/run_all.py
-  uv run python data-gen/generators/run_all.py --customers 500 --fraud-rate 0.05
-"""
-import argparse, json
-from pathlib import Path
+def main(count: int, output_path: Path, config: dict, states_data: dict) -> None:
+    """Write records to output_path as JSON."""
+    ...
+```
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--customers",    type=int,   default=1000)
-    parser.add_argument("--fraud-rate",   type=float, default=0.04)
-    parser.add_argument("--trips-per-policy", type=int, default=50)
-    parser.add_argument("--pdf-docs",     type=int,   default=1000,
-                        help="Total PDFs to generate (declaration + claim + renewal combined)")
-    parser.add_argument("--state-focus",  type=str,   default=None,
-                        help="Comma-separated state codes to oversample, e.g. TX,PA")
-    args = parser.parse_args()
+Generators call `validate_records()` before returning — schema violations are caught before the file is written.
 
-    # Load configs
-    config_dir = Path("data-gen/config")
-    states_data    = json.loads((config_dir / "states.json").read_text())
-    coverage_rules = json.loads((config_dir / "coverage_rules.json").read_text())
-    config = {"fraud_rate": args.fraud_rate, "coverage_rules": coverage_rules}
+### 6.1 `customer_gen.py`
 
-    data_dir = Path("data")
-    data_dir.mkdir(exist_ok=True)
+**Key design decisions:**
 
-    # Generation order matters — policies depend on customers, claims on policies
-    from customer_gen   import main as gen_customers
-    from policy_gen     import main as gen_policies
-    from claim_gen      import main as gen_claims
-    from telematics_gen import main as gen_telematics
-    from document_gen   import main as gen_documents
+| Decision | Implementation |
+|---|---|
+| State assignment | `random.choices()` with population weights from `states.json` |
+| Credit score distribution | `random.gauss(700, 95)` clipped to [300, 850] → realistic right-skewed distribution |
+| DOB distribution | Weighted age buckets: 18–24 (8%), 25–34 (20%), 35–44 (22%), 45–54 (20%), 55–64 (17%), 65–74 (10%), 75–85 (3%) |
+| Null email rate | ~3% of customers have `email=null` (prefer phone — realistic) |
+| ZIP codes | State-specific prefix ranges (not random 5-digit) |
+| Agent territories | 20 agents with weighted assignment (geographic clustering) |
 
-    gen_customers(args.customers,                           data_dir / "customers.json",   config, states_data)
-    gen_policies(args.customers,                            data_dir / "policies.json",    config, states_data)
-    gen_claims(args.customers,                              data_dir / "claims.json",      config, states_data)
-    gen_telematics(args.customers * args.trips_per_policy,  data_dir / "telematics.json",  config, states_data)
-    gen_documents(args.pdf_docs,                            Path("documents"),             config, states_data)
+**Enrollment model note:** Customer record does not contain a `drive_score` — that lives on the policy. The enrollment decision is made in `policy_gen.py` per policy, so a customer with two policies could have one enrolled and one not.
 
-    print("\n✓ All data generated.")
-    print(f"  customers:  {data_dir}/customers.json")
-    print(f"  policies:   {data_dir}/policies.json")
-    print(f"  claims:     {data_dir}/claims.json")
-    print(f"  telematics: {data_dir}/telematics.json")
-    print(f"  documents:  documents/ ({args.pdf_docs} PDFs)")
+### 6.2 `policy_gen.py`
 
-if __name__ == "__main__":
-    main()
+**Coverage object construction rules** (enforced in code, not just schema):
+
+| State condition | Generator behavior |
+|---|---|
+| `pip_required: true` (13 no-fault states) | `pip.included=true`, `pip.required=true`, `pip.pip_limit` set from `states.json` |
+| `uninsured_motorist_required: true` (19 states + DC) | `uninsured_motorist.included=true`, `uninsured_motorist.required=true` |
+| Collision/comprehensive | `included` based on vehicle age — older vehicles less likely (realistic) |
+| GAP coverage | Only generated for vehicles ≤ 3 years old (makes financial sense) |
+| `required` field | **Always emitted** on every coverage object, even as `false` |
+
+**Non-telematics customers:**
+
+`drive_score=null` is set for ~38% of policies (100% minus `telematics_enrollment_rate`). This is a deliberate business state:
+- Non-telematics policies do not receive drive score discounts
+- `telematics_gen.py` explicitly skips policies with `drive_score=null`
+- Phase 3's feature engineering uses `COALESCE(drive_score, 50)` for non-enrolled policies
+
+**Premium calculation factors:**
+- Base: $1,200
+- Vehicle age factor: newer vehicles cost more to insure (replacement value)
+- Credit factor: 680 baseline; 300-score customer pays ~35% more
+- Telematics discount: 3–15% based on drive score tier
+- Coverage breadth: each optional coverage adds ~8% to base
+- State factor: FL (1.35×), MI (1.42×), NY (1.38×), ID (0.85×), VT (0.82×)
+- ±10% random jitter for realism
+
+### 6.3 `claim_gen.py`
+
+**Fraud injection design:**
+
+Fraud signals are injected as consistent combinations — not random individual signals. This matters for model quality: real fraud patterns involve co-occurring signals.
+
+| Fraud combo | What it models |
+|---|---|
+| `claim_delta_high` + `recent_policy_reinstatement` | Policy reinstated then immediately claiming |
+| `telematics_anomaly` + `incident_location_mismatch` | GPS data contradicts reported accident location |
+| `frequency_spike` + `rapid_refiling` | Same customer filing multiple claims in short period |
+| `staged_accident_pattern` + `no_police_report` + `multiple_claimants` | Organized ring pattern |
+
+**Claim type assignment:**
+
+Claims are matched to the policy's active coverages. No PIP claim is generated for a policy without PIP coverage. No-fault state policies have PIP weighted 4× higher in type selection.
+
+**Filing lag:** Non-fraud claims use a decreasing-weight distribution (most claims filed in 0–10 days). Fraud claims often file same-day or next-day (urgency signal).
+
+### 6.4 `telematics_gen.py`
+
+**Non-telematics customer handling (explicit):**
+
+```
+enrolled_policies = [p for p in policies if p.get("drive_score") is not None]
+non_enrolled_count = len(policies) - len(enrolled_policies)
+print(f"{non_enrolled_count} non-enrolled — skipping")
+```
+
+This is printed during generation and verified by `verify_telematics.py`. It is expected output, not a warning.
+
+**Drive score formula:**
+
+```
+score = 100
+       - hard_brakes * 2.0 * norm
+       - rapid_accelerations * 1.5 * norm
+       - speeding_events * 3.0 * norm
+       - night_driving_pct * 10.0
+```
+
+Where `norm = min(10.0 / distance_miles, 2.0)` normalizes events to per-10-miles — long highway trips are not unfairly penalized for absolute event counts.
+
+**Trip volume model:** Trip count scales with policy age (days since effective date), capped at 2× baseline. New policies have fewer recorded trips. This makes the telematics dataset temporally realistic.
+
+**Hour distribution:** Peaks at 7–9 AM and 5–7 PM (commute pattern). Night hours (10 PM–5 AM) have low probability — when a night-hour trip does occur, `night_driving_pct` is boosted.
+
+### 6.5 `document_gen.py`
+
+**Document type split:** 45% declarations, 35% claim letters, 20% renewal notices.
+
+**Declaration page structure** (critical for Phase 4 RAG accuracy):
+- Named insured block → 1 retrievable unit
+- Vehicle details → 1 retrievable unit  
+- Coverage table → **one row per coverage type, limit and deductible kept together in the same row**
+- State-specific notice
+
+This structure is why `chunk_declaration.py` uses section-aware chunking rather than fixed-size. Splitting a coverage row across chunks loses the limit/deductible association.
+
+**Renewal notice structure:**
+- Premium change table (table-zone → table-aware chunking in Phase 4)
+- Prose explanation section (prose-zone → paragraph chunking in Phase 4)
+
+**Non-enrolled customer handling:** Renewal notices display "Not enrolled in telematics program" in the Drive Score field rather than leaving it blank.
+
+### 6.6 `faq_gen.py` (Phase 4 stub)
+
+Phase 1 creates a stub so `run_all.py` runs without errors. The stub writes an empty `faqs/faq_corpus.json`. Full implementation is in `PHASE_4_RAG.md`.
+
+---
+
+## 7. `run_all.py` — Entry Point
+
+```bash
+# Linux / macOS — run from repo root
+uv run python data-gen/generators/run_all.py
+
+# With custom parameters
+uv run python data-gen/generators/run_all.py \
+    --customers 500 \
+    --fraud-rate 0.05 \
+    --trips-target 25000 \
+    --pdf-docs 200
+
+# Skip PDFs for faster dev iteration
+uv run python data-gen/generators/run_all.py --customers 100 --no-pdfs
+```
+
+```powershell
+# Windows
+uv run python data-gen\generators\run_all.py
+
+uv run python data-gen\generators\run_all.py `
+    --customers 500 `
+    --fraud-rate 0.05 `
+    --trips-target 25000 `
+    --pdf-docs 200
+
+# Skip PDFs
+uv run python data-gen\generators\run_all.py --customers 100 --no-pdfs
+```
+
+**CLI arguments:**
+
+| Argument | Default | Description |
+|---|---|---|
+| `--customers` | 1000 | Number of customer records |
+| `--fraud-rate` | 0.04 | Claim fraud injection rate (0.0–0.15) |
+| `--trips-target` | 50000 | Target total trips across enrolled policies |
+| `--pdf-docs` | 500 | Total PDFs to generate |
+| `--no-pdfs` | false | Skip PDF generation (faster for dev) |
+| `--output-dir` | `.` | Root for data/, documents/, faqs/ |
+
+**Generation order is fixed:**
+
+```
+1. customers.json     ← standalone
+2. policies.json      ← reads customers.json
+3. claims.json        ← reads policies.json
+4. telematics.json    ← reads policies.json; skips non-enrolled
+5. PDFs               ← reads customers, policies, claims
+6. FAQs               ← Phase 4 stub (no-op)
 ```
 
 ---
 
-## 7. Verification & Git Tag
+## 8. Data Verification
 
-### Verification
+Each generator has a dedicated verification script. All scripts:
+- Are standalone (`python verify_*.py`) — no test framework required
+- Accept `--path` to override the default file location
+- Return exit code 0 (pass) or 1 (fail)
+- Print ✓/✗/⚠ per check with detail
+- Run together via `verify_all.py`
+
+### 8.1 `verify_customers.py`
 
 ```bash
-uv run python data-gen/generators/run_all.py --customers 100 --pdf-docs 50
-# Expected: data/*.json + documents/*.pdf created
+uv run python data-gen/generators/verify_customers.py
+uv run python data-gen/generators/verify_customers.py --path data/customers.json
+```
 
-# Spot-check fraud rate
-python -c "import json; d=json.load(open('data/claims.json')); fraud=[c for c in d if c['is_fraud']]; print(f'{len(fraud)}/{len(d)} fraud ({len(fraud)/len(d):.1%})')"
+| Check | Pass condition |
+|---|---|
+| File exists, valid JSON | Non-empty, parseable |
+| Schema validation | All records pass `customer.schema.json` |
+| Unique customer_id | No duplicates |
+| All 50 states + DC present | Full geographic coverage (warn for small datasets) |
+| State distribution | No single state > 25% |
+| Credit scores in [300, 850] | No out-of-range values |
+| Credit score mean realistic | Mean 600–750 |
+| DOBs represent adults 18–85 | No minors, no centenarians |
+| Null email rate 0–10% | ~3% expected |
+| created_at all in the past | No future timestamps |
 
-# Spot-check vehicle sub-schema (all VINs are 17 chars)
+### 8.2 `verify_policies.py`
+
+```bash
+uv run python data-gen/generators/verify_policies.py
+uv run python data-gen/generators/verify_policies.py --path data/policies.json --customers data/customers.json
+```
+
+| Check | Pass condition |
+|---|---|
+| Schema validation | All records pass `policy.schema.json` |
+| Unique policy_number | No duplicates |
+| All 7 coverage types present | Every policy has all 7 coverage keys |
+| `required` always emitted | Never missing from any coverage object |
+| No-fault states: pip.required=true | All 13 no-fault state policies |
+| VINs exactly 17 characters | No truncated or padded VINs |
+| drive_score null or in [0, 100] | Valid for both enrolled and non-enrolled |
+| Telematics enrollment rate 45–80% | Expected ~62% |
+| effective_date < expiry_date | Date order correct |
+| Premium in [$300, $8000] | Realistic range (warn-only) |
+| Multi-policy rate 8–25% | Expected ~15% |
+| Referential integrity | All customer_ids exist in customers.json |
+
+### 8.3 `verify_claims.py`
+
+```bash
+uv run python data-gen/generators/verify_claims.py
+uv run python data-gen/generators/verify_claims.py --path data/claims.json --policies data/policies.json
+```
+
+| Check | Pass condition |
+|---|---|
+| Schema validation | All records pass `claim.schema.json` |
+| Unique claim_id | No duplicates |
+| Fraud rate in [2%, 8%] | Expected ~4% |
+| Fraud claims have signals | At least one fraud_signal per is_fraud=true |
+| Non-fraud claims: no signals | fraud_signals empty for is_fraud=false |
+| filed_date >= incident_date | Date ordering correct |
+| No future incident_date | All dates in the past |
+| settlement_amount <= claim_amount | No over-settlements |
+| Denied claims: no settlement | Denied → null settlement |
+| Referential integrity | All policy_numbers exist in policies.json |
+
+### 8.4 `verify_telematics.py`
+
+```bash
+uv run python data-gen/generators/verify_telematics.py
+uv run python data-gen/generators/verify_telematics.py --path data/telematics.json --policies data/policies.json
+```
+
+| Check | Pass condition |
+|---|---|
+| Schema validation | All records pass `telematics.schema.json` |
+| Unique trip_id | No duplicates |
+| drive_score in [0, 100] | Per-trip score in range |
+| night_driving_pct in [0, 1] | Valid fraction |
+| All event counts >= 0 | No negative events |
+| distance_miles and duration > 0 | No zero-distance trips |
+| No future trip_dates | All in the past |
+| Non-enrolled policies have no trips | drive_score=null → 0 trip rows |
+| Per-policy avg score ≈ policy drive_score | Within ±25 pts (warn-only) |
+| Trips per enrolled policy 1–1000 | Reasonable volume |
+
+### 8.5 `verify_documents.py`
+
+```bash
+uv run python data-gen/generators/verify_documents.py
+uv run python data-gen/generators/verify_documents.py --dir documents/
+```
+
+| Check | Pass condition |
+|---|---|
+| Directory exists | Non-empty |
+| Filename convention | All files start with `decl_`, `claim_letter_`, or `renewal_` |
+| No zero-byte files | All PDFs have content |
+| Valid PDF headers | `%PDF-` magic bytes (sample) |
+| decl_ filenames match policies | Policy number exists in policies.json (sample) |
+| claim_letter_ filenames match claims | Claim ID exists in claims.json (sample) |
+
+### 8.6 `verify_all.py`
+
+Runs all verifiers in sequence and prints a summary.
+
+```bash
+# Linux / macOS
+uv run python data-gen/generators/verify_all.py
+
+# Skip PDF verification (faster)
+uv run python data-gen/generators/verify_all.py --skip-pdfs
+
+# Custom paths
+uv run python data-gen/generators/verify_all.py \
+    --data-dir data \
+    --docs-dir documents
+```
+
+```powershell
+# Windows
+uv run python data-gen\generators\verify_all.py
+uv run python data-gen\generators\verify_all.py --skip-pdfs
+```
+
+Example output:
+```
+=======================================================
+  Phase 1 Verification Summary
+=======================================================
+  ✓  customers
+  ✓  policies
+  ✓  claims
+  ✓  telematics
+  ✓  documents
+
+  Overall: ALL PASS ✓
+```
+
+---
+
+## 9. Verification & Git Tag
+
+### 9.1 Full build and verify sequence
+
+```bash
+# Linux / macOS — from repo root
+
+# Install Phase 1 dependencies
+uv add faker python-dateutil reportlab Pillow tqdm jsonschema
+uv sync
+
+# Generate (1000 customers, default settings)
+uv run python data-gen/generators/run_all.py
+
+# Verify all
+uv run python data-gen/generators/verify_all.py
+
+# Quick spot-checks
 python -c "
 import json
-policies = json.load(open('data/policies.json'))
-bad_vins = [p['policy_number'] for p in policies if len(p['vehicle']['vin']) != 17]
-print(f'VIN length violations: {bad_vins or \"none\"}')
-"
-
-# Spot-check coverages sub-schema (all 7 keys present on every policy)
-python -c "
-import json
-from data_gen.config import coverage_rules  # or load directly
-rules = json.load(open('data-gen/config/coverage_rules.json'))
-expected = set(rules['coverage_types'])
-policies = json.load(open('data/policies.json'))
-bad = [p['policy_number'] for p in policies if set(p['coverages'].keys()) != expected]
-print(f'Coverage key violations: {bad or \"none\"}')
-"
-
-# Spot-check PIP required flag on no-fault states
-python -c "
-import json
-states = json.load(open('data-gen/config/states.json'))
-policies = json.load(open('data/policies.json'))
-nf_states = {s for s, r in states.items() if r.get('pip_required')}
-bad = [p['policy_number'] for p in policies
-       if p['state'] in nf_states and not p['coverages'].get('pip', {}).get('required')]
-print(f'PIP required violations in no-fault states: {bad[:5] or \"none\"} (showing first 5)')
+c = json.load(open('data/customers.json'))
+p = json.load(open('data/policies.json'))
+claims = json.load(open('data/claims.json'))
+t = json.load(open('data/telematics.json'))
+fraud = [x for x in claims if x['is_fraud']]
+enrolled = [x for x in p if x['drive_score'] is not None]
+non_enrolled = [x for x in p if x['drive_score'] is None]
+print(f'Customers: {len(c):,}')
+print(f'Policies: {len(p):,} ({len(enrolled):,} enrolled, {len(non_enrolled):,} non-enrolled)')
+print(f'Claims: {len(claims):,} ({len(fraud):,} fraud = {len(fraud)/len(claims):.1%})')
+print(f'Telematics: {len(t):,} trips')
 "
 ```
 
-### Phase Gate Checklist
+```powershell
+# Windows
+uv run python data-gen\generators\run_all.py
+uv run python data-gen\generators\verify_all.py
+```
 
-- [ ] All generators produce valid JSON
-- [ ] Fraud rate is within 3–5%
+### 9.2 Phase Gate Checklist
+
+- [ ] All generators produce valid JSON without errors
+- [ ] `verify_all.py` reports ALL PASS
+- [ ] Fraud rate within 3–5% (verified by `verify_claims.py`)
 - [ ] All 50 states + DC present in `customers.json`
 - [ ] PDFs generated with correct filename convention (`decl_`, `claim_letter_`, `renewal_`)
-- [ ] All policy records pass `policy.schema.json` validation (vehicle + coverages sub-schemas)
+- [ ] All policy records pass `policy.schema.json` (vehicle + coverages sub-schemas)
 - [ ] All 7 coverage keys present on every policy record
-- [ ] PIP coverage marked `required: true` for all no-fault state policies (MI, FL, NY, NJ, PA)
-- [ ] All VINs are exactly 17 characters
-- [ ] `required` field always emitted on coverage objects (never omitted for optional coverages)
+- [ ] `required` field always emitted on coverage objects (never omitted)
+- [ ] PIP coverage marked `required: true` for all 13 no-fault state policies
+- [ ] All VINs exactly 17 characters
+- [ ] Non-enrolled policies (drive_score=null) have zero rows in telematics.json
 - [ ] `uv run ruff check .` passes with no errors
 
-### Git Tag
+### 9.3 Troubleshooting Common Failures
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ModuleNotFoundError: faker` | Phase 1 deps not installed | `uv add faker python-dateutil reportlab Pillow tqdm jsonschema` |
+| `FileNotFoundError: data/customers.json` | policy_gen/claim_gen run before customer_gen | Always use `run_all.py` — it enforces order |
+| `jsonschema.ValidationError: 'required' is a required property` | Coverage object missing `required` field | Check `policy_gen._build_coverages()` — all coverages must emit `required` |
+| `verify_policies: PIP violations` | No-fault state policies missing pip.required=true | Check `_NO_FAULT_STATES` set and `_build_coverages()` logic |
+| `verify_telematics: trips for non-enrolled policies` | drive_score check incorrect | Confirm `p.get("drive_score") is not None` (not just truthiness) |
+| `verify_telematics: 0 enrolled policies` | All policies have drive_score=null | Check `telematics_enrollment_rate` in coverage_rules.json |
+| PDF generation fails with `ImportError` | ReportLab not installed | `uv add reportlab Pillow` |
+
+### 9.4 Git Tag
 
 ```bash
 git add -A
-git commit -m "Phase 1: data generation — all generators + schemas + config (nested vehicle/coverages sub-schemas)"
+git commit -m "Phase 1: data generation — all generators, schemas, verification scripts"
 git tag v0.1.0
 ```
 
