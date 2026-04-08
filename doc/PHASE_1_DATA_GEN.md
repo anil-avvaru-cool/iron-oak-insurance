@@ -523,11 +523,7 @@ Phase 1 creates a stub so `run_all.py` runs without errors. The stub writes an e
 uv run python data-gen/generators/run_all.py
 
 # With custom parameters
-uv run python data-gen/generators/run_all.py \
-    --customers 500 \
-    --fraud-rate 0.05 \
-    --trips-target 25000 \
-    --pdf-docs 200
+uv run python data-gen/generators/run_all.py --customers 500 --fraud-rate 0.05 --trips-target 25000 --pdf-docs 200
 
 # Skip PDFs for faster dev iteration
 uv run python data-gen/generators/run_all.py --customers 100 --no-pdfs
