@@ -249,7 +249,7 @@ if __name__ == "__main__":
 
 ### Verification
 
-```bash
+```powershell
 # Start Postgres only
 docker compose up -d postgres
 
@@ -257,15 +257,18 @@ docker compose up -d postgres
 uv run python db/load_json.py
 
 # Spot-check queries
-docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c \
+docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c `
   "SELECT state, COUNT(*) FROM policies GROUP BY state ORDER BY count DESC LIMIT 10;"
 
-docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c \
+docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c `
   "SELECT is_fraud, COUNT(*) FROM claims GROUP BY is_fraud;"
 
-docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c \
-  "SELECT p.state, p.coverages->'pip'->'required' AS pip_required, COUNT(*) \
+docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c `
+  "SELECT p.state, p.coverages->'pip'->'required' AS pip_required, COUNT(*) `
    FROM policies p GROUP BY 1,2 ORDER BY 1;"
+
+# Maintenance: To clean up if required.
+docker compose down -v
 ```
 
 ### Phase Gate Checklist
