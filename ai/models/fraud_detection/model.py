@@ -68,7 +68,9 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
     model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
 
     preds = model.predict(X_test)
+    print("preds:", preds[:10])
     proba = model.predict_proba(X_test)[:, 1]
+    print("probas:", proba[:10])
     roc = roc_auc_score(y_test, proba)
 
     # Print report for meetup demo
@@ -113,6 +115,8 @@ def main() -> None:
 
     df = fraud_features()
     log.info("fraud_train_start", rows=len(df), fraud_rows=int(df["label"].sum()))
+    print(df.head(10))    
+    
     model = train(df)
 
     # Score full dataset for fairness audit

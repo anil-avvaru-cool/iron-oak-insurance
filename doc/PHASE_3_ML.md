@@ -141,7 +141,7 @@ def fraud_features(engine=None) -> pd.DataFrame:
             c.is_fraud                                              AS label,
             c.claim_amount,
             c.claim_amount / NULLIF(p.premium_annual, 0)           AS claim_to_premium_ratio,
-            EXTRACT(DAY FROM c.filed_date::date - c.incident_date::date) AS days_to_file,
+            c.filed_date::date - c.incident_date::date             AS days_to_file,
             COUNT(c2.claim_id) OVER (PARTITION BY c.customer_id)   AS customer_claim_count,
             COALESCE(t.avg_drive_score, 50)                        AS avg_drive_score,
             COALESCE(t.hard_brakes_90d, 0)                         AS hard_brakes_90d,
@@ -851,7 +851,7 @@ from ai.utils.log import get_logger
 
 log = get_logger(__name__)
 
-MIN_SLICE_SIZE = 30       # skip slices smaller than this
+MIN_SLICE_SIZE = 50       # skip slices smaller than this
 DEVIATION_THRESHOLD = 2.0  # flag if predicted rate / overall rate > threshold
 REPORT_DIR = Path("ai/models/fairness_reports")
 

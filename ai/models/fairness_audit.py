@@ -39,7 +39,7 @@ from ai.utils.log import get_logger
 
 log = get_logger(__name__)
 
-MIN_SLICE_SIZE = 30       # skip slices smaller than this
+MIN_SLICE_SIZE = 50       # skip slices smaller than this
 DEVIATION_THRESHOLD = 2.0  # flag if predicted rate / overall rate > threshold
 REPORT_DIR = Path("ai/models/fairness_reports")
 

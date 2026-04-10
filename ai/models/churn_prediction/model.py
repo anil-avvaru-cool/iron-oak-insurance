@@ -117,6 +117,7 @@ def main() -> None:
 
     df = churn_features()
     log.info("churn_train_start", rows=len(df), churn_rows=int(df["label"].sum()))
+    print(df.head(10))
     model = train(df)
 
     # Score full dataset for fairness audit
