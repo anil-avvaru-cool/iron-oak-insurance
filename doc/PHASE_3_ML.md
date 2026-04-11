@@ -1261,7 +1261,7 @@ if __name__ == "__main__":
 
 # 1. Ensure Docker is running with data loaded
 docker compose up -d postgres
-uv run python -m db.load_json   # if not already loaded
+uv run python -m db.load_json --truncate  # if not already loaded
 
 # 2. Create __init__.py files (one-time)
 touch ai/__init__.py ai/models/__init__.py ai/utils/__init__.py \

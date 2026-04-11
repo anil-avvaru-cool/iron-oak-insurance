@@ -115,7 +115,7 @@ def main() -> None:
 
     df = fraud_features()
     log.info("fraud_train_start", rows=len(df), fraud_rows=int(df["label"].sum()))
-    print(df.head(10))    
+    print(df.head(20))
     
     model = train(df)
 

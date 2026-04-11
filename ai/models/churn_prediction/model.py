@@ -35,8 +35,31 @@ CATEGORICAL = ["state"]
 EXCLUDE_COLS = {"customer_id", "label", "zip_prefix"}
 
 
+CATEGORICAL  = ["state"]
+EXCLUDE_COLS = {"customer_id", "label", "zip_prefix"}
+
 def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
-    df = df.copy().fillna(0)
+    df = df.copy()
+
+    # Drive score columns: sentinel -1 for non-enrolled (not "missing data")
+    drive_cols = ["avg_drive_score", "avg_drive_score_12m",
+                  "avg_drive_score_3m", "drive_score_delta"]
+    enrolled_mask = df["is_enrolled"] == 1
+    for col in drive_cols:
+        if col in df.columns:
+            median_val = df.loc[enrolled_mask, col].median()
+            df.loc[enrolled_mask, col]  = df.loc[enrolled_mask, col].fillna(median_val)
+            df.loc[~enrolled_mask, col] = -1  # explicit sentinel, not 0
+
+    # days_since_last_claim: large sentinel for customers with no claims
+    if "days_since_last_claim" in df.columns:
+        df["days_since_last_claim"] = df["days_since_last_claim"].fillna(9999)
+
+    # Standard fills
+    df["credit_score"] = df["credit_score"].fillna(df["credit_score"].median())
+    df["avg_premium"]  = df["avg_premium"].fillna(0)
+    df["tenure_days"]  = df["tenure_days"].fillna(0)
+
     encoders: dict[str, LabelEncoder] = {}
     for col in CATEGORICAL:
         if col in df.columns:
@@ -117,7 +140,8 @@ def main() -> None:
 
     df = churn_features()
     log.info("churn_train_start", rows=len(df), churn_rows=int(df["label"].sum()))
-    print(df.head(10))
+    pd.set_option('display.max_columns', None)
+    print(df.sample(n=10))
     model = train(df)
 
     # Score full dataset for fairness audit

@@ -253,8 +253,9 @@ if __name__ == "__main__":
 # Start Postgres only
 docker compose up -d postgres
 
-# Wait for healthy, then load
-uv run python db/load_json.py
+# Wait for healthy, then load, truncate mostly
+#uv run python db/load_json.py
+uv run python db/load_json.py --truncate
 
 # Spot-check queries
 docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c `

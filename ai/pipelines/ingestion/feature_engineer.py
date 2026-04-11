@@ -154,104 +154,145 @@ def risk_features(engine=None) -> pd.DataFrame:
     """)
     return pd.read_sql(sql, engine)
 
-
 def churn_features(engine=None) -> pd.DataFrame:
-    """Returns one row per customer with churn label (lapsed/cancelled = 1).
+    """Returns one row per customer with churn label and enriched features.
 
-    Extra columns included for fairness audit (state, zip_prefix).
-
-    Fan-out fix: all three joins (policies, telematics, claims) were raw joins
-    that multiplied rows against each other. A customer with 2 policies, 300
-    telematics trips, and 5 claims produced 2*300*5 = 3,000 rows before
-    GROUP BY — inflating policy_count, total_claims, and all averages.
-
-    Also removed has_active_policy: it was derived from the same p.status
-    column as the label, causing data leakage (feature importance ~65%).
-
-    Label is now derived cleanly from the pre-aggregated policy subquery.
+    Changes from original:
+    - Label uses CASE WHEN MAX(status) to avoid alphabetic-sort bug
+    - is_enrolled flag added as explicit model feature (not imputed away)
+    - drive_score_delta uses policy-level drive_score vs. telematics avg
+      so non-enrolled customers get a real signal instead of 0 vs. 0
+    - avg_drive_score uses policy drive_score (set at enrollment),
+      not telematics avg which is NULL for non-enrolled
+    - telematics joins scoped to p.policy_number via a subquery to avoid
+      fan-out row multiplication when a customer has multiple policies
+      each with many telematics rows
+    - days_since_last_claim added: recency of claims is a churn signal
+    - tenure_days added: longer-tenured customers churn less
+    - Extra columns for fairness audit: state, zip_prefix (excluded from
+      model features via EXCLUDE_COLS in churn model)
     """
     engine = engine or get_engine()
     sql = text("""
+        WITH policy_summary AS (
+            -- One row per policy with telematics aggregates pre-joined.
+            -- Aggregating here prevents fan-out when joining telematics
+            -- to a customer who holds multiple policies.
+            SELECT
+                p.policy_number,
+                p.customer_id,
+                p.status,
+                p.premium_annual,
+                p.effective_date,
+                p.drive_score                                          AS policy_drive_score,
+                CASE WHEN p.drive_score IS NOT NULL THEN 1 ELSE 0 END  AS is_enrolled,
+
+                -- Telematics 12-month average (NULL for non-enrolled)
+                t12.avg_drive_score_12m,
+
+                -- Telematics 3-month average (NULL for non-enrolled)
+                t3.avg_drive_score_3m,
+
+                -- Delta: policy baseline minus recent telematics avg.
+                -- Non-enrolled: NULL (handled in Python imputation, not here).
+                -- Negative = driving deteriorating since enrollment.
+                CASE
+                    WHEN p.drive_score IS NOT NULL
+                         AND t12.avg_drive_score_12m IS NOT NULL
+                    THEN t12.avg_drive_score_12m - p.drive_score
+                    ELSE NULL
+                END                                                    AS drive_score_delta
+
+            FROM policies p
+
+            LEFT JOIN (
+                SELECT
+                    policy_number,
+                    AVG(drive_score) AS avg_drive_score_12m
+                FROM telematics
+                WHERE trip_date >= NOW() - INTERVAL '365 days'
+                GROUP BY policy_number
+            ) t12 ON t12.policy_number = p.policy_number
+
+            LEFT JOIN (
+                SELECT
+                    policy_number,
+                    AVG(drive_score) AS avg_drive_score_3m
+                FROM telematics
+                WHERE trip_date >= NOW() - INTERVAL '90 days'
+                GROUP BY policy_number
+            ) t3 ON t3.policy_number = p.policy_number
+        ),
+
+        claim_summary AS (
+            -- One row per customer: claim count and days since last claim.
+            -- Scoped to customer level so it joins cleanly without fan-out.
+            SELECT
+                customer_id,
+                COUNT(claim_id)                                        AS total_claims,
+                EXTRACT(
+                    DAY FROM NOW() - MAX(filed_date::timestamptz)
+                )::int                                                 AS days_since_last_claim
+            FROM claims
+            GROUP BY customer_id
+        )
+
         SELECT
-    -- ── Identity (excluded from model features) ──────────────────────────
-    cust.customer_id,
-    cust.state,
-    LEFT(cust.zip, 3)                                          AS zip_prefix,
+            cust.customer_id,
 
-    -- ── Label ─────────────────────────────────────────────────────────────
-    -- 1 = churned (any lapsed or cancelled policy), 0 = retained
-    -- Uses MAX so a customer with one active + one lapsed policy is labelled
-    -- churned = 1, matching real-world churn definition.
-    MAX(CASE WHEN p.status IN ('lapsed', 'cancelled') THEN 1 ELSE 0 END)
-                                                               AS label,
+            -- Fairness audit columns (excluded from model features in EXCLUDE_COLS)
+            cust.state,
+            LEFT(cust.zip, 3)                                          AS zip_prefix,
 
-    -- ── Static customer features ──────────────────────────────────────────
-    COALESCE(cust.credit_score, 650)                           AS credit_score,
-    COUNT(DISTINCT p.policy_number)                            AS policy_count,
-    COALESCE(AVG(p.premium_annual), 0)                         AS avg_premium,
+            -- Label: 1 if any policy is lapsed or cancelled.
+            -- Uses CASE WHEN MAX() to avoid alphabetic-sort bug with MAX(status).
+            MAX(CASE WHEN ps.status IN ('lapsed', 'cancelled') THEN 1 ELSE 0 END)
+                                                                       AS label,
 
-    -- ── Telematics enrollment flag ────────────────────────────────────────
-    -- 1 if any policy for this customer is enrolled; 0 otherwise.
-    -- Allows the model to treat drive_score_delta = 0 differently for
-    -- enrolled vs. non-enrolled customers.
-    MAX(CASE WHEN p.drive_score IS NOT NULL THEN 1 ELSE 0 END) AS is_enrolled,
+            -- Customer-level features
+            COALESCE(cust.credit_score, 650)                           AS credit_score,
+            COUNT(DISTINCT ps.policy_number)                           AS policy_count,
+            COALESCE(AVG(ps.premium_annual), 0)                        AS avg_premium,
 
-    -- ── Drive score (policy-level, not recalculated from trips) ──────────
-    -- NULL for non-enrolled; Python fillna(50) later.
-    AVG(p.drive_score)                                         AS avg_drive_score,
+            -- Tenure: days from earliest policy effective date to today.
+            -- Longer-tenured customers churn less.
+            COALESCE(
+                EXTRACT(DAY FROM NOW() - MIN(ps.effective_date::timestamptz))::int,
+                0
+            )                                                          AS tenure_days,
 
-    -- ── Trip-window averages (12-month) ───────────────────────────────────
-    -- NULL when no trips exist in the window (non-enrolled or recently lapsed).
-    -- Python fillna(0) applies after extraction.
-    AVG(t12.drive_score_12m)                                   AS avg_drive_score_12m,
+            -- Enrollment: 1 if any policy is telematics-enrolled.
+            MAX(ps.is_enrolled)                                        AS is_enrolled,
 
-    -- ── Trip-window averages (3-month) ────────────────────────────────────
-    AVG(t3.drive_score_3m)                                     AS avg_drive_score_3m,
+            -- Drive score: policy-level baseline for enrolled customers.
+            -- NULL for non-enrolled; imputed in Python with sentinel -1.
+            AVG(CASE WHEN ps.is_enrolled = 1 THEN ps.policy_drive_score ELSE NULL END)
+                                                                       AS avg_drive_score,
 
-    -- ── Drive score delta: 3m avg − 12m avg ──────────────────────────────
-    -- Negative delta = deteriorating driving = churn signal.
-    -- NULL when either window is unavailable (non-enrolled).
-    -- Python fillna(0) makes non-enrolled customers neutral on this feature,
-    -- which is correct: we have no signal about their driving trajectory.
-    AVG(t3.drive_score_3m) - AVG(t12.drive_score_12m)         AS drive_score_delta,
+            -- Telematics averages: NULL for non-enrolled; imputed in Python.
+            AVG(ps.avg_drive_score_12m)                                AS avg_drive_score_12m,
+            AVG(ps.avg_drive_score_3m)                                 AS avg_drive_score_3m,
 
-    -- ── Claims history ────────────────────────────────────────────────────
-    COUNT(DISTINCT c.claim_id)                                 AS total_claims
+            -- Drive score delta: avg across enrolled policies.
+            -- NULL for fully non-enrolled customers; imputed in Python.
+            AVG(ps.drive_score_delta)                                  AS drive_score_delta,
 
-FROM customers cust
+            -- Claim features
+            COALESCE(cs.total_claims, 0)                               AS total_claims,
+            cs.days_since_last_claim,
 
-LEFT JOIN policies p
-    ON p.customer_id = cust.customer_id
+            -- Active policy flag
+            MAX(CASE WHEN ps.status = 'active' THEN 1 ELSE 0 END)     AS has_active_policy
 
-LEFT JOIN claims c
-    ON c.customer_id = cust.customer_id
-
--- 12-month per-policy trip average (subquery avoids row explosion on JOIN)
-LEFT JOIN (
-    SELECT
-        policy_number,
-        AVG(drive_score) AS drive_score_12m
-    FROM telematics
-    WHERE trip_date >= NOW() - INTERVAL '365 days'
-    GROUP BY policy_number
-) t12
-    ON t12.policy_number = p.policy_number
-
--- 3-month per-policy trip average
-LEFT JOIN (
-    SELECT
-        policy_number,
-        AVG(drive_score) AS drive_score_3m
-    FROM telematics
-    WHERE trip_date >= NOW() - INTERVAL '90 days'
-    GROUP BY policy_number
-) t3
-    ON t3.policy_number = p.policy_number
-
-GROUP BY
-    cust.customer_id,
-    cust.state,
-    cust.zip,
-    cust.credit_score
+        FROM customers cust
+        LEFT JOIN policy_summary ps  ON ps.customer_id = cust.customer_id
+        LEFT JOIN claim_summary  cs  ON cs.customer_id = cust.customer_id
+        GROUP BY
+            cust.customer_id,
+            cust.state,
+            cust.zip,
+            cust.credit_score,
+            cs.total_claims,
+            cs.days_since_last_claim
     """)
     return pd.read_sql(sql, engine)
