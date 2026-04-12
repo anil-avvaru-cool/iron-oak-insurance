@@ -143,7 +143,10 @@ def predict(records: list[dict]) -> list[dict]:
     raw = model.predict(df[feature_cols])
 
     raw = np.clip(raw, min_pred, max_pred)
-    scores = _normalize(raw) if max_pred > min_pred else raw
+    if max_pred > min_pred:
+        scores = (raw - min_pred) / (max_pred - min_pred) * 100.0
+    else:
+        scores = np.full_like(raw, 50.0, dtype=float)
 
     for i, rec in enumerate(records):
         score = round(float(scores[i]), 2)

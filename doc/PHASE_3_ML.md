@@ -1324,43 +1324,111 @@ uv run python -m ai.api.handlers.main
 curl http://localhost:8000/health
 
 # Fraud score
-curl -s -X POST http://localhost:8000/models/fraud/score \
-  -H "Content-Type: application/json" \
+# Positive example
+curl -s -X POST http://localhost:8000/models/fraud/score `
+  -H "Content-Type: application/json" `
   -d '{
-    "claims": [{
-      "claim_id": "CLM-00001",
-      "claim_amount": 12000,
-      "claim_to_premium_ratio": 3.2,
-      "days_to_file": 1,
-      "customer_claim_count": 4,
-      "avg_drive_score": 31,
-      "hard_brakes_90d": 45,
-      "state": "TX",
-      "vehicle_make": "Toyota",
-      "zip_prefix": "750",
-      "claim_type": "collision",
-      "fraud_signal_count": 3
-    }]
-  }' | python -m json.tool
+  "claims": [{
+    "claim_id": "CLM-99001",
+    "claim_amount": 18500,
+    "claim_to_premium_ratio": 4.8,
+    "days_to_file": 0,
+    "customer_claim_count": 5,
+    "avg_drive_score": 22,
+    "hard_brakes_90d": 67,
+    "state": "FL",
+    "vehicle_make": "BMW",
+    "zip_prefix": "331",
+    "claim_type": "collision",
+    "fraud_signal_count": 4
+  }]
+}' | python -m json.tool
+
+# Neutral example:
+curl -s -X POST http://localhost:8000/models/fraud/score `
+  -H "Content-Type: application/json" `
+  -d '{
+  "claims": [{
+    "claim_id": "CLM-99003",
+    "claim_amount": 6200,
+    "claim_to_premium_ratio": 1.8,
+    "days_to_file": 3,
+    "customer_claim_count": 2,
+    "avg_drive_score": 54,
+    "hard_brakes_90d": 18,
+    "state": "TX",
+    "vehicle_make": "Ford",
+    "zip_prefix": "750",
+    "claim_type": "collision",
+    "fraud_signal_count": 1
+  }]
+}' | python -m json.tool
+
+# Negative example
+curl -s -X POST http://localhost:8000/models/fraud/score `
+  -H "Content-Type: application/json" `
+  -d '{
+  "claims": [{
+    "claim_id": "CLM-99002",
+    "claim_amount": 1800,
+    "claim_to_premium_ratio": 0.6,
+    "days_to_file": 5,
+    "customer_claim_count": 1,
+    "avg_drive_score": 84,
+    "hard_brakes_90d": 3,
+    "state": "VT",
+    "vehicle_make": "Toyota",
+    "zip_prefix": "054",
+    "claim_type": "comprehensive",
+    "fraud_signal_count": 0
+  }]
+}' | python -m json.tool
 
 # Risk score
-curl -s -X POST http://localhost:8000/models/risk/score \
-  -H "Content-Type: application/json" \
+curl -s -X POST http://localhost:8000/models/risk/score `
+  -H "Content-Type: application/json" `
   -d '{
-    "policies": [{
-      "policy_number": "TX-00142",
-      "state": "TX",
-      "zip_prefix": "750",
-      "drive_score": 62,
-      "credit_score": 710,
-      "vehicle_year": 2019,
-      "vehicle_make": "Ford",
-      "total_claims": 1,
-      "total_claim_amount": 4200,
-      "avg_drive_score_12m": 65,
-      "avg_drive_score_3m": 58
-    }]
-  }' | python -m json.tool
+  "policies": [{
+    "policy_number": "TX-00142",
+    "state": "TX",
+    "is_telematics_enrolled": 1,
+    "zip_prefix": "750",
+    "drive_score": 38,
+    "credit_score": 540,
+    "vehicle_year": 2009,
+    "vehicle_make": "Dodge",
+    "avg_drive_score_12m": 45,
+    "avg_drive_score_3m": 36,    
+    "coverage_count": 5,
+    "has_collision": 1,
+    "has_comprehensive": 1,
+    "has_pip": 0,
+    "drive_score_delta": -9
+  }]
+}' | python -m json.tool
+
+# low tier example
+curl -s -X POST http://localhost:8000/models/risk/score `
+  -H "Content-Type: application/json" `
+  -d '{
+  "policies": [{
+    "policy_number": "VT-00021",
+    "state": "VT",
+    "is_telematics_enrolled": 1,
+    "zip_prefix": "056",
+    "drive_score": 97,
+    "credit_score": 820,
+    "vehicle_year": 2015,
+    "vehicle_make": "Toyota",
+    "avg_drive_score_12m": 93,
+    "avg_drive_score_3m": 96,    
+    "coverage_count": 2,
+    "has_collision": 0,
+    "has_comprehensive": 0,
+    "has_pip": 0,
+    "drive_score_delta": 3
+  }]
+}' | python -m json.tool
 
 # Churn score
 curl -s -X POST http://localhost:8000/models/churn/score \
