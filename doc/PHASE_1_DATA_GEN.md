@@ -526,7 +526,7 @@ uv run python data-gen/generators/run_all.py
 uv run python data-gen/generators/run_all.py --customers 500 --fraud-rate 0.05 --trips-target 25000 --pdf-docs 200
 
 # Skip PDFs for faster dev iteration
-uv run python data-gen/generators/run_all.py --customers 100 --no-pdfs
+uv run python data-gen/generators/run_all.py --customers 5000 --no-pdfs
 ```
 
 ```powershell

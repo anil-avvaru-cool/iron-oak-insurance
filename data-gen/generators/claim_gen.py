@@ -14,20 +14,34 @@ Key design decisions:
     - Filed date is always >= incident date; filing lag is realistic (0-60 days)
     - Settlement amounts are < claim amounts for approved/settled claims
     - No-fault state claims skew toward PIP claim type
+    - Per-policy claim count drawn from Poisson distribution and hard-capped at
+      MAX_CLAIMS_PER_POLICY_PER_YEAR * policy_age_years to prevent ML training outliers
 """
 from __future__ import annotations
 
 import json
+import math
 import random
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 from faker import Faker
 from validate import validate_records
 
 fake = Faker("en_US")
 Faker.seed(44)
 random.seed(44)
+
+# ---------------------------------------------------------------------------
+# Per-policy claim count limits
+# Industry average is ~0.28 claims/policy/year (claim_rate_per_policy).
+# Poisson draw models the natural randomness of rare independent events.
+# Hard cap prevents synthetic outliers from corrupting ML training targets —
+# no real policy accumulates 198 lifetime claims.
+# ---------------------------------------------------------------------------
+MAX_CLAIMS_PER_POLICY_PER_YEAR = 3   # catastrophic single-policy ceiling
+_rng = np.random.default_rng(seed=44)
 
 _CLAIM_TYPES = ["collision", "comprehensive", "liability", "pip", "uninsured_motorist"]
 
@@ -93,6 +107,40 @@ _FRAUD_SIGNAL_COMBOS = [
     ["frequency_spike", "claim_delta_high"],
     ["staged_accident_pattern", "no_police_report", "multiple_claimants"],
 ]
+
+
+def _policy_age_years(policy: dict) -> float:
+    """
+    Returns policy age in years, floored at 0.25 (3 months).
+    Used to scale the per-policy claim count cap and Poisson expected value.
+    """
+    try:
+        eff = date.fromisoformat(policy["effective_date"])
+        exp = date.fromisoformat(policy["expiry_date"])
+        end = min(exp, date.today())
+        age_days = max((end - eff).days, 1)
+    except (ValueError, KeyError):
+        age_days = 365
+    return max(age_days / 365.0, 0.25)
+
+
+def _claims_count_for_policy(claim_rate: float, policy_age_years: float) -> int:
+    """
+    Draw a realistic claim count for one policy using a Poisson distribution,
+    then hard-cap at MAX_CLAIMS_PER_POLICY_PER_YEAR * policy_age_years.
+
+    Poisson is the natural model for rare, independent events (accidents).
+    The hard cap prevents the long tail of the Poisson from producing
+    unrealistic multi-claim policies that corrupt ML training targets.
+
+    Examples at claim_rate=0.28:
+      1-year policy  → expected=0.28, Poisson draw usually 0 or 1, cap=3
+      2-year policy  → expected=0.56, draw usually 0-2, cap=6
+    """
+    expected = claim_rate * policy_age_years
+    draw = int(_rng.poisson(expected))
+    cap = math.ceil(MAX_CLAIMS_PER_POLICY_PER_YEAR * policy_age_years)
+    return min(draw, cap)
 
 
 def _pick_claim_type(policy: dict, state_rules: dict) -> str:
@@ -182,15 +230,11 @@ def generate(count: int, config: dict, states_data: dict,
     claim_n = 1
 
     for policy in eligible_policies:
-        # Decide how many claims this policy has
-        if random.random() > claim_rate:
-            continue  # No claims for this policy
+        age_years = _policy_age_years(policy)
+        n_claims = _claims_count_for_policy(claim_rate, age_years)
 
-        n_claims = 1
-        if random.random() < 0.12:  # 12% of claiming policies have 2+ claims
-            n_claims = 2
-        if random.random() < 0.03:  # 3% have 3 claims
-            n_claims = 3
+        if n_claims == 0:
+            continue
 
         state = policy["state"]
         state_rules = states_data.get(state, {})

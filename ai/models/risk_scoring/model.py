@@ -1,18 +1,11 @@
 """
-Risk Scoring — XGBoost regressor predicting premium as a risk proxy.
+Risk Scoring — XGBoost regressor.
+
+Target: premium_annual (actuarially-informed proxy for risk)
+Features: drive score, credit score, vehicle year, state, coverage elections, telematics trend
 
 Module run:  uv run python -m ai.models.risk_scoring.model
 Library use: from ai.models.risk_scoring.model import train, predict
-
-Output per policy:
-  risk_score      float 0–100   (normalized predicted premium)
-  risk_tier       str           "low" | "medium" | "high"
-
-Environment variables required (no defaults):
-  DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
-
-TODO Phase 3+: add county-level loss ratios via FIPS code lookup
-  when the dataset includes coordinate data.
 """
 from __future__ import annotations
 
@@ -32,10 +25,18 @@ log = get_logger(__name__)
 
 MODEL_PATH = Path("ai/models/risk_scoring/risk_model.json")
 CATEGORICAL = ["state", "vehicle_make"]
-# Audit/identity columns excluded from model features
-EXCLUDE_COLS = {"policy_number", "premium_annual", "zip_prefix"}
-# Tier thresholds (applied to normalized 0–100 score)
-TIER_THRESHOLDS = {"low": 40, "medium": 70}  # low < 40 ≤ medium < 70 ≤ high
+
+# Columns excluded from model features — audit/identity/target only
+EXCLUDE_COLS = {
+    "policy_number",
+    "premium_annual",   # this IS the target
+    "zip_prefix",       # kept for fairness audit only
+    "vehicle_make",     # kept for fairness audit only
+}
+
+# Tier thresholds applied to normalized 0–100 risk score
+# Tuned to premium_annual distribution: low < p33, medium < p67, high >= p67
+TIER_THRESHOLDS = {"low": 33, "medium": 67}
 
 
 def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
@@ -54,7 +55,6 @@ def _feature_cols(df: pd.DataFrame) -> list[str]:
 
 
 def _normalize(values: np.ndarray) -> np.ndarray:
-    """Min-max normalize to [0, 100]."""
     lo, hi = values.min(), values.max()
     if hi == lo:
         return np.full_like(values, 50.0, dtype=float)
@@ -81,9 +81,11 @@ def train(df: pd.DataFrame) -> tuple[xgb.XGBRegressor, float, float]:
     )
 
     model = xgb.XGBRegressor(
-        n_estimators=200,
+        n_estimators=300,
         max_depth=5,
         learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
         eval_metric="rmse",
         random_state=42,
         verbosity=0,
@@ -98,16 +100,17 @@ def train(df: pd.DataFrame) -> tuple[xgb.XGBRegressor, float, float]:
     full_preds = model.predict(X)
     min_pred, max_pred = float(full_preds.min()), float(full_preds.max())
 
-    # Feature importance for demo
+    # Feature importance
     importance = dict(zip(X.columns, model.feature_importances_))
-    top5 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:5]
+    top8 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:8]
     print(f"MAE: ${mae:,.2f}  |  R²: {r2:.4f}")
-    print("Top features:", top5)
+    print("Top features:")
+    for feat, imp in top8:
+        print(f"  {feat:<30} {imp:.4f}")
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     model.save_model(MODEL_PATH)
 
-    # Save normalization bounds alongside model
     import json
     bounds_path = MODEL_PATH.with_suffix(".bounds.json")
     bounds_path.write_text(json.dumps({"min": min_pred, "max": max_pred}))
@@ -116,6 +119,7 @@ def train(df: pd.DataFrame) -> tuple[xgb.XGBRegressor, float, float]:
         "model_trained",
         model="risk",
         rows=len(df),
+        target="premium_annual",
         mae=round(mae, 2),
         r2=round(r2, 4),
         elapsed_s=round(time.time() - t0, 2),
@@ -138,7 +142,6 @@ def predict(records: list[dict]) -> list[dict]:
     feature_cols = _feature_cols(df)
     raw = model.predict(df[feature_cols])
 
-    # Clamp and normalize using training bounds
     raw = np.clip(raw, min_pred, max_pred)
     scores = _normalize(raw) if max_pred > min_pred else raw
 
@@ -154,10 +157,15 @@ def main() -> None:
     from ai.models.fairness_audit import run_audit
 
     df = risk_features()
+
+    print("\nFeature sample (20 rows):")
+    print(df.sample(min(20, len(df))).to_string())
+    print(f"\npremium_annual stats:\n{df['premium_annual'].describe().round(2)}")
+
     log.info("risk_train_start", rows=len(df))
     model, min_pred, max_pred = train(df)
 
-    # Score full dataset for fairness audit using normalized risk score
+    # Score full dataset for fairness audit
     df_proc, _ = preprocess(df.copy())
     feature_cols = _feature_cols(df_proc)
     raw = model.predict(df_proc[feature_cols])
@@ -165,11 +173,9 @@ def main() -> None:
     scores = _normalize(raw) if max_pred > min_pred else raw
     df["predicted_score"] = scores
 
-    # Fairness audit treats high-risk tier as "positive" outcome
+    # High-risk tier = positive outcome for fairness audit
     df["label"] = (df["predicted_score"] >= TIER_THRESHOLDS["medium"]).astype(int)
     run_audit(df, model_name="risk", score_col="predicted_score", label_col="label")
-
-    # TODO Phase 3+: add county-level loss ratios via FIPS code lookup.
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ log = get_logger(__name__)
 MODEL_PATH = Path("ai/models/fraud_detection/fraud_model.json")
 CATEGORICAL = ["state", "claim_type", "vehicle_make"]
 # Columns excluded from model features (used for audit only)
-EXCLUDE_COLS = {"claim_id", "label", "zip_prefix"}
+EXCLUDE_COLS = {"claim_id", "label", "zip_prefix", "fraud_signal_count"}
 
 
 def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
@@ -67,10 +67,8 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
     )
     model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
 
-    preds = model.predict(X_test)
-    print("preds:", preds[:10])
-    proba = model.predict_proba(X_test)[:, 1]
-    print("probas:", proba[:10])
+    preds = model.predict(X_test)    
+    proba = model.predict_proba(X_test)[:, 1]    
     roc = roc_auc_score(y_test, proba)
 
     # Print report for meetup demo
@@ -115,7 +113,8 @@ def main() -> None:
 
     df = fraud_features()
     log.info("fraud_train_start", rows=len(df), fraud_rows=int(df["label"].sum()))
-    print(df.head(20))
+    pd.set_option('display.max_columns', None)
+    print(df.sample(n=10))
     
     model = train(df)
 

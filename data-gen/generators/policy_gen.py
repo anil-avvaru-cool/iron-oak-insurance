@@ -349,16 +349,27 @@ def _calculate_premium(
 
 # ── Vehicle generator ──────────────────────────────────────────────────────
 
+# Make-specific year floors — prevents historically impossible combinations
+_MAKE_YEAR_FLOORS = {
+    "Tesla":      2008,  # first Roadster deliveries
+    "Jeep":       1941,  # safe — already above 1990 floor
+    "Ram":        2010,  # Ram became standalone brand (split from Dodge)
+    "GMC":        1990,  # fine as-is, but explicit for clarity
+}
+
 def _pick_vehicle(config: dict) -> dict:
     """Pick a random make/model/year/vin combination."""
-    makes_models = config.get("coverage_rules", {}).get("vehicle_makes_models", [])    
+    makes_models = config.get("coverage_rules", {}).get("vehicle_makes_models", [])
     make_entry = random.choice(makes_models)
     make = make_entry["make"]
     model = random.choice(make_entry["models"])
 
+    # Year floor for this make — prevents e.g. 1991 Tesla
+    year_floor = max(_MAKE_YEAR_FLOORS.get(make, 1990), 1990)
+
     # Year distribution: weighted toward recent years
+    years = list(range(year_floor, _CURRENT_YEAR + 1))
     year_weights = []
-    years = list(range(1990, _CURRENT_YEAR + 1))
     for y in years:
         age = _CURRENT_YEAR - y
         if age <= 3:
