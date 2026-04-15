@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aioi.internal/schemas/faq.schema.json",
+  "title": "AIOI FAQ Record",
+  "description": "A single Q&A pair. State-specific FAQs set applicable_states to state codes; generic FAQs set it to [\"ALL\"].",
+  "type": "object",
+  "required": ["faq_id","category","subcategory","question","answer","applicable_states","tags","source","version"],
+  "additionalProperties": false,
+  "properties": {
+    "faq_id": {
+      "type": "string",
+      "pattern": "^faq-[a-z0-9-]+-[0-9]{3}$"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["coverage_concepts","state_rules","claims_process","costs_discounts","policy_management"]
+    },
+    "subcategory": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 60,
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "question": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 300,
+      "pattern": "\\?$"
+    },
+    "answer": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 2000
+    },
+    "applicable_states": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "oneOf": [
+          {"const": "ALL"},
+          {"type": "string", "pattern": "^(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)$"}
+        ]
+      }
+    },
+    "tags": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 15,
+      "items": {"type": "string", "pattern": "^[a-z0-9-]+$", "minLength": 2, "maxLength": 40}
+    },
+    "source":  {"type": "string", "const": "synthetic-faq-v1"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+    "last_updated":    {"type": "string", "format": "date"},
+    "review_required": {"type": "boolean", "default": false}
+  }
+}

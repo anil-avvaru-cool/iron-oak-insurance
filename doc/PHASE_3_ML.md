@@ -1385,25 +1385,24 @@ curl -s -X POST http://localhost:8000/models/fraud/score `
 }' | python -m json.tool
 
 # Risk score
+# High
 curl -s -X POST http://localhost:8000/models/risk/score `
   -H "Content-Type: application/json" `
   -d '{
   "policies": [{
     "policy_number": "TX-00142",
-    "state": "TX",
+    "state": "FL",
     "is_telematics_enrolled": 1,
-    "zip_prefix": "750",
-    "drive_score": 38,
-    "credit_score": 540,
-    "vehicle_year": 2009,
-    "vehicle_make": "Dodge",
-    "avg_drive_score_12m": 45,
-    "avg_drive_score_3m": 36,    
-    "coverage_count": 5,
+    "drive_score": 22,
+    "credit_score": 480,
+    "vehicle_year": 2023,
+    "avg_drive_score_12m": 38,
+    "avg_drive_score_3m": 24,
+    "coverage_count": 6,
     "has_collision": 1,
     "has_comprehensive": 1,
-    "has_pip": 0,
-    "drive_score_delta": -9
+    "has_pip": 1,
+    "drive_score_delta": -14
   }]
 }' | python -m json.tool
 

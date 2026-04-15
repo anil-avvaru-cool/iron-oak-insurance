@@ -1,6 +1,7 @@
 - **Strategy**: Validate approach before acting; research the web when needed. Flag course corrections proactively.
 - **Analysis**: Thoroughly understand the codebase before making changes. Root-cause problems — no workarounds.
 - **Design**: Iterative phases with working prototypes. Simple, extensible, not over-engineered. Mark placeholders for future improvements.
+    - Do not add "hyphen" in folder names, use underscore if required.
 - **Artifacts**: Generate all scripts/commands for both Windows (local) and Linux (AWS).
 - **Clarifications**: Ask only when necessary; include a suggested answer.
 - **Git**: Do not commit any changes.

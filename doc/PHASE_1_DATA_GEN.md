@@ -233,8 +233,7 @@ uv add xgboost scikit-learn pandas numpy fastapi uvicorn mangum
 
 **Phase 4 — RAG Pipeline**
 ```bash
-uv add sentence-transformers pgvector PyMuPDF langchain-community \
-       langchain-postgres openai
+uv add sentence-transformers pgvector PyMuPDF langchain-community langchain-postgres openai
 ```
 
 **Phase 5 — Bedrock Agents**
