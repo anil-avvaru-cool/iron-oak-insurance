@@ -2419,7 +2419,7 @@ uv run python -m ai.api.handlers.main
 New-Item -ItemType Junction -Path data_gen -Target data-gen
 
 # Generate FAQ corpus
-uv run python data-gen\generators\faq_gen.py
+uv run python data_gen\generators\faq_gen.py
 
 # Dry-run
 uv run python -m ai.pipelines.embedding.embed_and_load --dry-run
