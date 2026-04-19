@@ -26,6 +26,7 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/rag", tags=["rag"])
 
 _DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
+print(f"RAG debug endpoint enabled: {_DEBUG_MODE}")
 
 
 # ── Request / Response models ───────────────────────────────────────────────

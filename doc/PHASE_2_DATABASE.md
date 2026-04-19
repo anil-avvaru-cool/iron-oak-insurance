@@ -268,6 +268,9 @@ docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c `
   "SELECT p.state, p.coverages->'pip'->'required' AS pip_required, COUNT(*) `
    FROM policies p GROUP BY 1,2 ORDER BY 1;"
 
+docker exec iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c "SELECT * FROM policies LIMIT 10;" > sqlOut.txt
+docker exec iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c "SELECT * FROM document_chunks WHERE source_type = 'policy_document' and customer_id is NOT NULL  LIMIT 10;" > sqlOut.txt
+
 ## Phase 4 Rag verification
 docker exec iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c "SELECT * FROM document_chunks WHERE source_type = 'faq' LIMIT 10;" > sqlOut.txt
 

@@ -6,7 +6,10 @@ Strategy:
   2. Detect section boundaries by bold headers (font flags) or font size > body.
   3. Split into logical sections: named_insured_block, vehicle_details,
      coverage_table, endorsements.
-  4. Coverage table: each row (coverage type + limit + deductible) is one chunk.
+  4. Coverage table: accumulate consecutive spans per row so that the coverage
+     label, status, limit, and deductible all land in the SAME chunk.
+     A new row starts when a span matches _COVERAGE_ROW_RE.
+     Orphaned header/footer lines (no coverage label) are grouped as one chunk.
   5. Target: 200–400 tokens per chunk; no overlap at section boundaries.
 
 Filename convention (load-bearing for metadata extraction):
@@ -37,13 +40,16 @@ except ImportError:
     def _tok(text: str) -> int:  # type: ignore[misc]
         return int(len(text.split()) * 1.3)
 
-# Pattern to identify coverage table rows:
-# e.g. "Collision   $500   ACV" or "Liability   30/60/25   —"
+# Matches the start of a coverage row (the coverage-type label cell)
 _COVERAGE_ROW_RE = re.compile(
-    r"(liability|collision|comprehensive|pip|uninsured|gap|roadside)",
+    r"^(liability|collision|comprehensive|pip|personal injury|uninsured|underinsured|gap|roadside)",
     re.IGNORECASE,
 )
-# Bold flag in PyMuPDF span flags bitmask
+# Table column headers — skip these as standalone chunks
+_TABLE_HEADER_RE = re.compile(
+    r"^(coverage|status|limit|deductible|type|included|not included|see policy|n/?a)$",
+    re.IGNORECASE,
+)
 _BOLD_FLAG = 1 << 4
 
 
@@ -55,7 +61,7 @@ def _extract_text_blocks(page: "fitz.Page") -> list[dict]:
     """Return list of {text, is_bold, font_size, bbox} for each span on the page."""
     blocks = []
     for block in page.get_text("dict")["blocks"]:
-        if block.get("type") != 0:  # skip image blocks
+        if block.get("type") != 0:
             continue
         for line in block.get("lines", []):
             for span in line.get("spans", []):
@@ -98,7 +104,7 @@ def _build_chunk(
         "source_type":   "policy_document",
         "doc_type":      "declaration_page",
         "policy_number": policy_number,
-        "customer_id":   None,  # resolved downstream from policy lookup if needed
+        "customer_id":   None,
         "state":         policy_number[:2] if policy_number else None,
         "page_number":   None,
         "section":       section,
@@ -108,12 +114,75 @@ def _build_chunk(
     }
 
 
+def _chunk_coverage_table(
+    table_blocks: list[dict],
+    policy_number: str,
+    start_index: int,
+) -> list[dict]:
+    """
+    Process all blocks in the coverage table section.
+
+    A coverage row starts when a block matches _COVERAGE_ROW_RE.
+    All subsequent blocks — status (Included/Not Included), limit, deductible —
+    are accumulated into that same chunk until the NEXT coverage label is seen.
+
+    Blocks that appear before the first coverage label (column headers like
+    "Status", "Limit", "Deductible") and after the last row (footers) are
+    grouped together as a single header/footer chunk rather than being discarded,
+    so the HNSW index doesn't retrieve them as answers.
+    """
+    chunks: list[dict] = []
+    chunk_index = start_index
+
+    current_row_lines: list[str] = []
+    current_coverage_label: str | None = None
+    header_footer_lines: list[str] = []
+
+    def flush_row():
+        nonlocal chunk_index, current_row_lines, current_coverage_label
+        if current_row_lines and current_coverage_label:
+            chunks.append(
+                _build_chunk(policy_number, "coverage_table_row", current_row_lines, chunk_index)
+            )
+            chunk_index += 1
+        current_row_lines = []
+        current_coverage_label = None
+
+    for block in table_blocks:
+        text = block["text"].strip()
+        if not text:
+            continue
+
+        if _COVERAGE_ROW_RE.match(text):
+            # Flush previous row before starting a new one
+            flush_row()
+            current_coverage_label = text
+            current_row_lines = [text]
+        elif current_coverage_label is not None:
+            # We're inside a coverage row — accumulate status/limit/deductible
+            current_row_lines.append(text)
+        else:
+            # Before any coverage label — these are column headers or intro text
+            if not _TABLE_HEADER_RE.match(text):
+                header_footer_lines.append(text)
+
+    # Flush last row
+    flush_row()
+
+    # Any remaining header/footer text gets one combined chunk (low retrieval value)
+    if header_footer_lines:
+        chunks.append(
+            _build_chunk(policy_number, "coverage_table_header", header_footer_lines, chunk_index)
+        )
+
+    return chunks
+
+
 def chunk_declaration_page(path: Path) -> list[dict]:
     """
     Chunk a declaration page PDF into section-aware chunks.
     Returns list of chunk dicts ready for embedding.
     """
-    # Extract policy number from filename: decl_TX-00142.pdf → TX-00142
     stem = path.stem  # "decl_TX-00142"
     policy_number = stem[len("decl_"):] if stem.startswith("decl_") else stem
 
@@ -125,58 +194,46 @@ def chunk_declaration_page(path: Path) -> list[dict]:
             all_blocks.append(block)
     doc.close()
 
-    chunks: list[dict] = []
+    # ── Pass 1: split all blocks into named sections ──────────────────────
+    sections: dict[str, list[dict]] = {
+        "named_insured_block": [],
+        "vehicle_details":     [],
+        "coverage_table":      [],
+        "endorsements":        [],
+        "other":               [],
+    }
     current_section = "named_insured_block"
-    current_lines: list[str] = []
-    chunk_index = 0
-    in_coverage_table = False
 
     for block in all_blocks:
-        text = block["text"]
-        new_section = _detect_section(text, block["is_bold"])
-
+        new_section = _detect_section(block["text"], block["is_bold"])
         if new_section:
-            # Flush current section before starting new one
-            if current_lines:
-                chunks.append(
-                    _build_chunk(policy_number, current_section, current_lines, chunk_index)
-                )
-                chunk_index += 1
-                current_lines = []
             current_section = new_section
-            in_coverage_table = (new_section == "coverage_table")
-            continue  # section header is not included in chunk text
+            continue  # section header itself is not content
+        sections[current_section].append(block)
 
-        if in_coverage_table and _COVERAGE_ROW_RE.search(text):
-            # Each coverage row is its own chunk to keep limit+deductible together
-            if current_lines:
-                # Flush any buffered non-row lines in the table section
-                chunks.append(
-                    _build_chunk(policy_number, current_section, current_lines, chunk_index)
-                )
-                chunk_index += 1
-                current_lines = []
-            # Collect the full row — gather adjacent non-header lines as the row continues
-            row_lines = [text]
-            chunks.append(
-                _build_chunk(policy_number, "coverage_table_row", row_lines, chunk_index)
-            )
-            chunk_index += 1
-        else:
-            current_lines.append(text)
-            # Flush if chunk is getting large (>400 tokens)
+    # ── Pass 2: chunk each section appropriately ──────────────────────────
+    chunks: list[dict] = []
+    chunk_index = 0
+
+    # Non-table sections: simple line accumulation with 400-token flush
+    for section_name in ("named_insured_block", "vehicle_details", "endorsements", "other"):
+        current_lines: list[str] = []
+        for block in sections[section_name]:
+            current_lines.append(block["text"])
             if _tok("\n".join(current_lines)) > 400:
-                chunks.append(
-                    _build_chunk(policy_number, current_section, current_lines, chunk_index)
-                )
+                chunks.append(_build_chunk(policy_number, section_name, current_lines, chunk_index))
                 chunk_index += 1
                 current_lines = []
+        if current_lines:
+            chunks.append(_build_chunk(policy_number, section_name, current_lines, chunk_index))
+            chunk_index += 1
 
-    # Flush final section
-    if current_lines:
-        chunks.append(
-            _build_chunk(policy_number, current_section, current_lines, chunk_index)
-        )
+    # Coverage table: row-aware chunking
+    coverage_chunks = _chunk_coverage_table(
+        sections["coverage_table"], policy_number, chunk_index
+    )
+    chunks.extend(coverage_chunks)
+    chunk_index += len(coverage_chunks)
 
     log.info(
         "declaration_chunked",

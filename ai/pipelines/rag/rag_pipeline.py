@@ -71,6 +71,10 @@ def retrieve(
     if strategy.get("customer_id"):
         filter_clauses.append("customer_id = %s")
         filter_params.append(strategy["customer_id"])
+    elif strategy.get("policy_number") is None and strategy["strategy"] == "policy_document":
+    # No specific policy identified — broaden to all policy_documents for this strategy
+    # rather than returning zero results
+        pass  # source_type filter already applied above)
 
     if strategy.get("state_filter"):
         # NULL state = ALL-applicable — must always pass the filter

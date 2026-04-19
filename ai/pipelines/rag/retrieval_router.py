@@ -55,6 +55,9 @@ import numpy as np
 
 load_dotenv()
 
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
@@ -76,6 +79,9 @@ _US_STATES = {
     "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
     "VA","WA","WV","WI","WY","DC",
 }
+
+# Common English words that are also state codes — require stronger signal to match
+_AMBIGUOUS_STATES = {"IN", "OR", "ME", "MA", "OH", "OK", "HI", "ID", "LA", "DE", "AL"}
 
 # ---------------------------------------------------------------------------
 # Semantic routing — anchor sentences
@@ -184,6 +190,7 @@ def _get_embedder() -> "SentenceTransformer":
                     raise RuntimeError("EMBED_MODEL_LOCAL not set in .env")                
                 logging.getLogger("sentence_transformers.models.Transformer").setLevel(logging.ERROR)
                 _embedder = SentenceTransformer(model_name)
+                print(f" Warning! Loaded embedder model '{model_name}' in retrieval_router, check if set_embedder() is being called properly to avoid duplicate loads.")
                 _build_centroids()
     return _embedder
 
@@ -277,9 +284,39 @@ def classify_query(query: str) -> dict:
 
 
 def _apply_state_filter(query: str, result: dict) -> None:
-    """Detect a US state abbreviation and set state_filter."""
+    """
+    Detect a US state abbreviation and set state_filter.
+    
+    Collects ALL matching state codes, then resolves ambiguity:
+    - Unambiguous codes (TX, FL, PA, etc.) win immediately.
+    - Ambiguous codes (IN, OR, ME, etc.) are only accepted if no
+      unambiguous code was found.
+    - If multiple unambiguous codes found, picks the last one
+      (state codes typically appear at the end of a query).
+    """
     q_upper = query.upper()
+    
+    unambiguous: list[str] = []
+    ambiguous: list[str]   = []
+    
     for state in _US_STATES:
         if re.search(rf"\b{state}\b", q_upper):
-            result["state_filter"] = state
-            break
+            if state in _AMBIGUOUS_STATES:
+                ambiguous.append(state)
+            else:
+                unambiguous.append(state)
+    
+    if unambiguous:
+        # Multiple unambiguous matches are rare but possible ("TX and FL rates")
+        # Pick the last one by position in the original query
+        result["state_filter"] = max(
+            unambiguous,
+            key=lambda s: q_upper.rfind(s)
+        )
+    elif ambiguous:
+        # Only accept an ambiguous match if it appears in a context that
+        # looks like a state reference — preceded or followed by a state-like signal
+        # For now: accept single ambiguous match, reject if multiple (too noisy)
+        if len(ambiguous) == 1:
+            result["state_filter"] = ambiguous[0]
+        # else: too ambiguous, leave state_filter as None

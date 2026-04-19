@@ -139,7 +139,29 @@ def load_chunks(chunks: list[dict], embeddings: list[list[float]], conn) -> int:
     conn.commit()
     return len(rows)
 
+# ── Customer ID backfill ─────────────────────────────────────────────────────
 
+def backfill_customer_ids(conn) -> int:
+    """
+    Populate customer_id on document_chunks rows where it is NULL
+    by joining through the policies table on policy_number.
+    Safe to run multiple times (only updates NULL rows).
+    Returns number of rows updated.
+    """
+    sql = """
+        UPDATE document_chunks dc
+        SET customer_id = p.customer_id
+        FROM policies p
+        WHERE dc.policy_number = p.policy_number
+          AND dc.customer_id IS NULL
+          AND dc.policy_number IS NOT NULL
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        updated = cur.rowcount
+    conn.commit()
+    log.info("customer_id_backfilled", extra={"rows_updated": updated})
+    return updated
 # ── Main ────────────────────────────────────────────────────────────────────
 
 def main(dry_run: bool = False) -> None:
@@ -192,6 +214,10 @@ def main(dry_run: bool = False) -> None:
 
         if skipped:
             log.info("chunkers_not_implemented", extra={"skipped": skipped})
+    # ── Backfill customer_id from policies table ─────────────────────────────
+    if not dry_run and conn:
+        backfilled = backfill_customer_ids(conn)
+        log.info("backfill_complete", extra={"rows": backfilled})
 
     # ── HNSW index — create AFTER bulk load ─────────────────────────────────
     if not dry_run and conn:

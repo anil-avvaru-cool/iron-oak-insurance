@@ -2157,11 +2157,11 @@ async def lifespan(app: FastAPI):
 
 
 # Update the FastAPI instantiation in main.py:
-# app = FastAPI(title="AIOI AI API", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="AIOI AI API", version="0.4.0", lifespan=lifespan)
 #
 # Add after existing router includes:
-# from ai.api.routers.rag_router import router as rag_router
-# app.include_router(rag_router)
+from ai.api.routers.rag_router import router as rag_router
+app.include_router(rag_router)
 ```
 
 > **Full `main.py` change summary:** Replace `app = FastAPI(...)` with `app = FastAPI(..., lifespan=lifespan)`, add the lifespan context above, and add `app.include_router(rag_router)`. Bump version to `"0.4.0"`.
@@ -2409,7 +2409,7 @@ uv run python -m ai.pipelines.embedding.embed_and_load --dry-run
 uv run python -m ai.pipelines.embedding.embed_and_load
 
 # Start API
-uv run python -m ai.api.handlers.main
+uv run fastapi dev ai/api/handlers/main.py
 ```
 
 ```powershell
@@ -2428,7 +2428,8 @@ uv run python -m ai.pipelines.embedding.embed_and_load --dry-run
 uv run python -m ai.pipelines.embedding.embed_and_load
 
 # Start API
-uv run python -m ai.api.handlers.main
+
+uv run fastapi dev .\ai\api\handlers\main.py
 ```
 
 ---
@@ -2482,7 +2483,7 @@ curl -s http://localhost:8000/rag/health | python -m json.tool
 # Windows
 
 # Policy document query
-$body = '{"query":"What is the deductible on policy TX-00142?","customer_id":"CUST-08821"}'
+$body = '{"query":"What is the deductible on policy NY-00005?","customer_id":"CUST-00004"}'
 Invoke-RestMethod -Uri http://localhost:8000/rag/query `
   -Method POST -ContentType "application/json" -Body $body
 
