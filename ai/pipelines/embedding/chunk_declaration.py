@@ -40,6 +40,12 @@ except ImportError:
     def _tok(text: str) -> int:  # type: ignore[misc]
         return int(len(text.split()) * 1.3)
 
+
+_FOOTER_RE = re.compile(
+    r"(avvaru|iron oak|confidential|governed by the laws|policyholder use only|synthetic-v1|www\.)",
+    re.IGNORECASE,
+)
+
 # Matches the start of a coverage row (the coverage-type label cell)
 _COVERAGE_ROW_RE = re.compile(
     r"^(liability|collision|comprehensive|pip|personal injury|uninsured|underinsured|gap|roadside)",
@@ -119,18 +125,6 @@ def _chunk_coverage_table(
     policy_number: str,
     start_index: int,
 ) -> list[dict]:
-    """
-    Process all blocks in the coverage table section.
-
-    A coverage row starts when a block matches _COVERAGE_ROW_RE.
-    All subsequent blocks — status (Included/Not Included), limit, deductible —
-    are accumulated into that same chunk until the NEXT coverage label is seen.
-
-    Blocks that appear before the first coverage label (column headers like
-    "Status", "Limit", "Deductible") and after the last row (footers) are
-    grouped together as a single header/footer chunk rather than being discarded,
-    so the HNSW index doesn't retrieve them as answers.
-    """
     chunks: list[dict] = []
     chunk_index = start_index
 
@@ -153,23 +147,24 @@ def _chunk_coverage_table(
         if not text:
             continue
 
+        # Stop absorbing into coverage rows if this is a footer line
+        if _FOOTER_RE.search(text):
+            flush_row()
+            header_footer_lines.append(text)
+            continue
+
         if _COVERAGE_ROW_RE.match(text):
-            # Flush previous row before starting a new one
             flush_row()
             current_coverage_label = text
             current_row_lines = [text]
         elif current_coverage_label is not None:
-            # We're inside a coverage row — accumulate status/limit/deductible
             current_row_lines.append(text)
         else:
-            # Before any coverage label — these are column headers or intro text
             if not _TABLE_HEADER_RE.match(text):
                 header_footer_lines.append(text)
 
-    # Flush last row
     flush_row()
 
-    # Any remaining header/footer text gets one combined chunk (low retrieval value)
     if header_footer_lines:
         chunks.append(
             _build_chunk(policy_number, "coverage_table_header", header_footer_lines, chunk_index)

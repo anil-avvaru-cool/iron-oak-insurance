@@ -2424,6 +2424,12 @@ uv run python data_gen\generators\faq_gen.py
 # Dry-run
 uv run python -m ai.pipelines.embedding.embed_and_load --dry-run
 
+# Delete exisitng chunks for fresh load if required
+docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c `
+  "DELETE FROM document_chunks;"
+
+docker exec -it iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c `
+  "DELETE FROM document_chunks WHERE doc_type = 'declaration_page';"
 # Embed and load
 uv run python -m ai.pipelines.embedding.embed_and_load
 
