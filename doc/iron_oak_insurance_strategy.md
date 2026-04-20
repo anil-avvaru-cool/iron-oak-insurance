@@ -20,7 +20,7 @@ Single public repository `iron-oak-insurance` — data generation and AI code in
 
 ```
 iron-oak-insurance/
-├── data-gen/
+├── data_gen/
 │   ├── generators/
 │   │   ├── customer_gen.py
 │   │   ├── policy_gen.py
@@ -269,7 +269,7 @@ FAQs are stored as JSON, one record per Q&A pair, with metadata for filtering an
 }
 ```
 
-Schema file: `data-gen/schemas/faq.schema.json`
+Schema file: `data_gen/schemas/faq.schema.json`
 
 ### 5.4 FAQ Generator (`faq_gen.py`)
 
@@ -687,8 +687,8 @@ Phases are structured by capability — each phase completes one full horizontal
 ### Phase 4 — RAG Pipeline
 **Deliverable:** Generated PDFs and FAQ corpus chunked, embedded, and answerable through a document Q&A endpoint
 
-- Build `data-gen/schemas/faq.schema.json` — FAQ record schema
-- Build `data-gen/generators/faq_gen.py` — generates FAQ corpus from `states.json` and `coverage_rules.json`
+- Build `data_gen/schemas/faq.schema.json` — FAQ record schema
+- Build `data_gen/generators/faq_gen.py` — generates FAQ corpus from `states.json` and `coverage_rules.json`
 - Extend `run_all.py` to include FAQ generation into `faqs/`
 - Build `ai/pipelines/embedding/` — PDF + FAQ chunking, embed with `all-MiniLM-L6-v2` or Ollama; tag each chunk with `source_type` (`policy_document` or `faq`)
 - Load embeddings into pgvector (already running from Phase 2)

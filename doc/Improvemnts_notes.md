@@ -1,8 +1,10 @@
-- Review attached Phase_4_RAG.md thoroughly, analyze missing items
-- Recommend/Mention quantization details
-- Use python module approach instead of standalone file like uv run python -m ai.models.fairness_audit --model fraud
-- chunk_renewal.py, chunk_claim_letter.py missing
-- Get all the urls and configuration values from environment variables to deploy in aws easily.
-- Provide bullet point list of full implementation plan.
-
+- Review attached Phase_5_Bedrock.md thoroughly, analyze missing, TODO items, documentation corrections.
+- Pull all possible configuration items from .env file.
+- If no environment variable found then app should throw error, no default values.
+- For system prompt, use full expansion of company name like "Avvaru Iron Oak Insurance" instead of "AIOI"
+- claims/fraud agent analysis: 
+    - Does agent(s) has access to check customer and policy info from backed database?
+    - Does it save data to any document/database?
+    - What is the best design to maintain security, guard rails, prompt injection etc. 
 - Provide AWS delete deployments commands as well.
+- Provide bullet point list of full implementation plan.

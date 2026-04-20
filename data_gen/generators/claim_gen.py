@@ -2,7 +2,7 @@
 claim_gen.py — generates synthetic claim records for AIOI.
 
 Usage:
-    uv run python data-gen/generators/claim_gen.py
+    uv run python data_gen/generators/claim_gen.py
     from claim_gen import generate, main
 
 Key design decisions:

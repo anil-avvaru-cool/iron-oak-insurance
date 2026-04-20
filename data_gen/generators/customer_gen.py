@@ -2,7 +2,7 @@
 customer_gen.py — generates synthetic customer records for AIOI.
 
 Usage:
-    uv run python data-gen/generators/customer_gen.py
+    uv run python data_gen/generators/customer_gen.py
     from customer_gen import generate, main
 
 Key design decisions:

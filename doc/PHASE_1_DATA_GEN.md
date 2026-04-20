@@ -1,7 +1,7 @@
 # Phase 1 — Repository Bootstrap, Toolchain & Data Generation
 
 **Git tag:** `v0.1.0`  
-**Deliverable:** `uv run python data-gen/generators/run_all.py` produces a complete local dataset across all five layers.
+**Deliverable:** `uv run python data_gen/generators/run_all.py` produces a complete local dataset across all five layers.
 
 **Meetup demo:** Run `run_all.py` live, inspect JSON records, open a generated PDF, show how state rules differ between TX and MI, demonstrate `verify_all.py` catching a data quality issue.
 
@@ -69,7 +69,7 @@ git branch -M main
 
 ```bash
 # Linux / macOS
-mkdir -p data-gen/generators data-gen/schemas data-gen/config \
+mkdir -p data_gen/generators data_gen/schemas data_gen/config \
          ai/agents/claims_agent ai/agents/fraud_agent ai/agents/policy_advisor_agent \
          ai/pipelines/ingestion ai/pipelines/embedding ai/pipelines/rag \
          ai/models/fraud_detection ai/models/risk_scoring ai/models/churn_prediction \
@@ -81,7 +81,7 @@ mkdir -p data-gen/generators data-gen/schemas data-gen/config \
 ```powershell
 # Windows
 $dirs = @(
-  "data-gen\generators","data-gen\schemas","data-gen\config",
+  "data_gen\generators","data_gen\schemas","data_gen\config",
   "ai\agents\claims_agent","ai\agents\fraud_agent","ai\agents\policy_advisor_agent",
   "ai\pipelines\ingestion","ai\pipelines\embedding","ai\pipelines\rag",
   "ai\models\fraud_detection","ai\models\risk_scoring","ai\models\churn_prediction",
@@ -261,7 +261,7 @@ source .venv/bin/activate       # Linux / macOS
 
 ## 3. Config Files
 
-### `data-gen/config/states.json`
+### `data_gen/config/states.json`
 
 Complete configuration for all 50 states + DC. Each entry includes:
 
@@ -281,7 +281,7 @@ No-fault states (pip_required=true): **DE, FL, HI, KS, KY, MA, MI, MN, NJ, ND, N
 
 UM-required states: **CT, IL, KS, MA, ME, MD, MN, MO, NC, NE, NJ, NY, OR, RI, SC, SD, VA, VT, WA, WI, WV, DC**
 
-### `data-gen/config/coverage_rules.json`
+### `data_gen/config/coverage_rules.json`
 
 Key fields:
 
@@ -298,7 +298,7 @@ Key fields:
 
 ## 4. JSON Schemas
 
-All schemas live in `data-gen/schemas/`. Every generator validates output against its schema before writing to disk.
+All schemas live in `data_gen/schemas/`. Every generator validates output against its schema before writing to disk.
 
 ### Schema design rules
 
@@ -342,7 +342,7 @@ Only policies with `drive_score != null` generate trip records. Non-telematics c
 
 ## 5. Shared Validator
 
-**`data-gen/generators/validate.py`**
+**`data_gen/generators/validate.py`**
 
 ```python
 """
@@ -519,27 +519,27 @@ Phase 1 creates a stub so `run_all.py` runs without errors. The stub writes an e
 
 ```bash
 # Linux / macOS — run from repo root
-uv run python data-gen/generators/run_all.py
+uv run python data_gen/generators/run_all.py
 
 # With custom parameters
-uv run python data-gen/generators/run_all.py --customers 500 --fraud-rate 0.05 --trips-target 25000 --pdf-docs 200
+uv run python data_gen/generators/run_all.py --customers 500 --fraud-rate 0.05 --trips-target 25000 --pdf-docs 200
 
 # Skip PDFs for faster dev iteration
-uv run python data-gen/generators/run_all.py --customers 5000 --no-pdfs
+uv run python data_gen/generators/run_all.py --customers 5000 --no-pdfs
 ```
 
 ```powershell
 # Windows
-uv run python data-gen\generators\run_all.py
+uv run python data_gen\generators\run_all.py
 
-uv run python data-gen\generators\run_all.py `
+uv run python data_gen\generators\run_all.py `
     --customers 500 `
     --fraud-rate 0.05 `
     --trips-target 25000 `
     --pdf-docs 200
 
 # Skip PDFs
-uv run python data-gen\generators\run_all.py --customers 100 --no-pdfs
+uv run python data_gen\generators\run_all.py --customers 100 --no-pdfs
 ```
 
 **CLI arguments:**
@@ -578,8 +578,8 @@ Each generator has a dedicated verification script. All scripts:
 ### 8.1 `verify_customers.py`
 
 ```bash
-uv run python data-gen/generators/verify_customers.py
-uv run python data-gen/generators/verify_customers.py --path data/customers.json
+uv run python data_gen/generators/verify_customers.py
+uv run python data_gen/generators/verify_customers.py --path data/customers.json
 ```
 
 | Check | Pass condition |
@@ -598,8 +598,8 @@ uv run python data-gen/generators/verify_customers.py --path data/customers.json
 ### 8.2 `verify_policies.py`
 
 ```bash
-uv run python data-gen/generators/verify_policies.py
-uv run python data-gen/generators/verify_policies.py --path data/policies.json --customers data/customers.json
+uv run python data_gen/generators/verify_policies.py
+uv run python data_gen/generators/verify_policies.py --path data/policies.json --customers data/customers.json
 ```
 
 | Check | Pass condition |
@@ -620,8 +620,8 @@ uv run python data-gen/generators/verify_policies.py --path data/policies.json -
 ### 8.3 `verify_claims.py`
 
 ```bash
-uv run python data-gen/generators/verify_claims.py
-uv run python data-gen/generators/verify_claims.py --path data/claims.json --policies data/policies.json
+uv run python data_gen/generators/verify_claims.py
+uv run python data_gen/generators/verify_claims.py --path data/claims.json --policies data/policies.json
 ```
 
 | Check | Pass condition |
@@ -640,8 +640,8 @@ uv run python data-gen/generators/verify_claims.py --path data/claims.json --pol
 ### 8.4 `verify_telematics.py`
 
 ```bash
-uv run python data-gen/generators/verify_telematics.py
-uv run python data-gen/generators/verify_telematics.py --path data/telematics.json --policies data/policies.json
+uv run python data_gen/generators/verify_telematics.py
+uv run python data_gen/generators/verify_telematics.py --path data/telematics.json --policies data/policies.json
 ```
 
 | Check | Pass condition |
@@ -660,8 +660,8 @@ uv run python data-gen/generators/verify_telematics.py --path data/telematics.js
 ### 8.5 `verify_documents.py`
 
 ```bash
-uv run python data-gen/generators/verify_documents.py
-uv run python data-gen/generators/verify_documents.py --dir documents/
+uv run python data_gen/generators/verify_documents.py
+uv run python data_gen/generators/verify_documents.py --dir documents/
 ```
 
 | Check | Pass condition |
@@ -679,21 +679,21 @@ Runs all verifiers in sequence and prints a summary.
 
 ```bash
 # Linux / macOS
-uv run python data-gen/generators/verify_all.py
+uv run python data_gen/generators/verify_all.py
 
 # Skip PDF verification (faster)
-uv run python data-gen/generators/verify_all.py --skip-pdfs
+uv run python data_gen/generators/verify_all.py --skip-pdfs
 
 # Custom paths
-uv run python data-gen/generators/verify_all.py \
+uv run python data_gen/generators/verify_all.py \
     --data-dir data \
     --docs-dir documents
 ```
 
 ```powershell
 # Windows
-uv run python data-gen\generators\verify_all.py
-uv run python data-gen\generators\verify_all.py --skip-pdfs
+uv run python data_gen\generators\verify_all.py
+uv run python data_gen\generators\verify_all.py --skip-pdfs
 ```
 
 Example output:
@@ -724,10 +724,10 @@ uv add faker python-dateutil reportlab Pillow tqdm jsonschema
 uv sync
 
 # Generate (1000 customers, default settings)
-uv run python data-gen/generators/run_all.py
+uv run python data_gen/generators/run_all.py
 
 # Verify all
-uv run python data-gen/generators/verify_all.py
+uv run python data_gen/generators/verify_all.py
 
 # Quick spot-checks
 python -c "
@@ -748,8 +748,8 @@ print(f'Telematics: {len(t):,} trips')
 
 ```powershell
 # Windows
-uv run python data-gen\generators\run_all.py
-uv run python data-gen\generators\verify_all.py
+uv run python data_gen\generators\run_all.py
+uv run python data_gen\generators\verify_all.py
 ```
 
 ### 9.2 Phase Gate Checklist

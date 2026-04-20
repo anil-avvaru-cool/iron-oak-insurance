@@ -1,7 +1,7 @@
 """
 policy_gen.py — generates policy records for AIOI synthetic dataset.
 
-Path:  data-gen/generators/policy_gen.py
+Path:  data_gen/generators/policy_gen.py
 
 Each policy is linked to a customer. Coverage objects are built per
 state-specific rules (PIP, UM requirements). Premium calculation
@@ -29,7 +29,7 @@ CHURN SIGNAL FIX (v1.1):
     Cap: 0.78
 
 Usage:
-    uv run python data-gen/generators/policy_gen.py
+    uv run python data_gen/generators/policy_gen.py
     from policy_gen import generate, main
 """
 from __future__ import annotations
@@ -595,7 +595,7 @@ def main(
 
 
 if __name__ == "__main__":
-    config_dir = Path("data-gen/config")
+    config_dir = Path("data_gen/config")
     data_dir = Path("data")
 
     states_data_ = json.loads((config_dir / "states.json").read_text())

@@ -9,7 +9,7 @@ All five categories are fully implemented:
   policy_management  — add vehicle/driver, coverage changes, renewal, SR-22
 
 Module run:  uv run python -m data_gen.generators.faq_gen
-Direct run:  uv run python data-gen/generators/faq_gen.py
+Direct run:  uv run python data_gen/generators/faq_gen.py
 """
 from __future__ import annotations
 

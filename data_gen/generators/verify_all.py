@@ -2,8 +2,8 @@
 verify_all.py — runs all Phase 1 verifications in sequence.
 
 Usage:
-    uv run python data-gen/generators/verify_all.py
-    uv run python data-gen/generators/verify_all.py --skip-pdfs
+    uv run python data_gen/generators/verify_all.py
+    uv run python data_gen/generators/verify_all.py --skip-pdfs
 
 Returns exit code 0 if all pass, 1 if any fail.
 """

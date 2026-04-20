@@ -2,7 +2,7 @@
 telematics_gen.py — generates synthetic telematics trip records for AIOI.
 
 Usage:
-    uv run python data-gen/generators/telematics_gen.py
+    uv run python data_gen/generators/telematics_gen.py
     from telematics_gen import generate, main
 
 Key design decisions:

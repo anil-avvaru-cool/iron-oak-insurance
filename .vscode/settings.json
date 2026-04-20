@@ -20,7 +20,7 @@
             "approve": true,
             "matchCommandLine": true
         },
-        "/^python data-gen/generators/policy_gen\\.py 2>&1 \\| head -1 ; type data/policies\\.json \\| Select-Object -First 40$/": {
+        "/^python data_gen/generators/policy_gen\\.py 2>&1 \\| head -1 ; type data/policies\\.json \\| Select-Object -First 40$/": {
             "approve": true,
             "matchCommandLine": true
         },
@@ -32,11 +32,11 @@
             "approve": true,
             "matchCommandLine": true
         },
-        "/^\\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data-gen/generators/run_all\\.py --customers 200 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
+        "/^\\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data_gen/generators/run_all\\.py --customers 200 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
             "approve": true,
             "matchCommandLine": true
         },
-        "/^\\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data-gen/generators/run_all\\.py --customers 1000 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
+        "/^\\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data_gen/generators/run_all\\.py --customers 1000 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
             "approve": true,
             "matchCommandLine": true
         },
@@ -44,7 +44,7 @@
             "approve": true,
             "matchCommandLine": true
         },
-        "/^& \\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data-gen/generators/run_all\\.py --customers 1000 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
+        "/^& \\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data_gen/generators/run_all\\.py --customers 1000 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
             "approve": true,
             "matchCommandLine": true
         }

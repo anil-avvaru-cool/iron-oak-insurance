@@ -12,7 +12,7 @@ Checks:
 
 Usage:
   uv run python -m data_gen.generators.verify_rag
-  uv run python data-gen/generators/verify_rag.py
+  uv run python data_gen/generators/verify_rag.py
 """
 from __future__ import annotations
 

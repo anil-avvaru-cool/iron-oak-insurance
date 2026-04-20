@@ -2,8 +2,8 @@
 verify_customers.py — standalone data quality verification for customers.json.
 
 Usage:
-    uv run python data-gen/generators/verify_customers.py
-    uv run python data-gen/generators/verify_customers.py --path data/customers.json
+    uv run python data_gen/generators/verify_customers.py
+    uv run python data_gen/generators/verify_customers.py --path data/customers.json
 
 Checks:
     1. File exists and is valid JSON

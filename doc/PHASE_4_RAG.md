@@ -75,7 +75,7 @@ $pkgs = @(
 $pkgs | ForEach-Object { New-Item -ItemType File -Force -Path "$_\__init__.py" }
 ```
 
-> **Note on `data-gen/` vs `data_gen/`:** Python module names cannot contain hyphens. The folder on disk is `data-gen/` (per the repo structure); the Python package uses `data_gen/` as a symlink or the generators are invoked directly. The simplest fix is to add `__init__.py` inside `data-gen/generators/` and invoke as `uv run python -m data_gen.generators.faq_gen` after adding a `data_gen` symlink: `ln -s data-gen data_gen` (Linux/macOS) or `New-Item -ItemType Junction -Path data_gen -Target data-gen` (Windows).
+> **Note on `data_gen/` vs `data_gen/`:** Python module names cannot contain hyphens. The folder on disk is `data_gen/` (per the repo structure); the Python package uses `data_gen/` as a symlink or the generators are invoked directly. The simplest fix is to add `__init__.py` inside `data_gen/generators/` and invoke as `uv run python -m data_gen.generators.faq_gen` after adding a `data_gen` symlink: `ln -s data_gen data_gen` (Linux/macOS) or `New-Item -ItemType Junction -Path data_gen -Target data_gen` (Windows).
 
 ---
 
@@ -123,7 +123,7 @@ Enable int8 with: `uv add sentence-transformers[onnx] optimum[onnxruntime]`
 
 ### Full `faq.schema.json`
 
-Replace the Phase 1 stub at `data-gen/schemas/faq.schema.json`:
+Replace the Phase 1 stub at `data_gen/schemas/faq.schema.json`:
 
 ```json
 {
@@ -185,13 +185,13 @@ Replace the Phase 1 stub at `data-gen/schemas/faq.schema.json`:
 }
 ```
 
-### `data-gen/generators/faq_gen.py`
+### `data_gen/generators/faq_gen.py`
 
 This is the **complete** generator — all five categories fully populated. Run via:
 
 ```bash
 uv run python -m data_gen.generators.faq_gen     # Linux / macOS (via symlink)
-uv run python data-gen/generators/faq_gen.py     # direct fallback
+uv run python data_gen/generators/faq_gen.py     # direct fallback
 ```
 
 ```python
@@ -206,7 +206,7 @@ All five categories are fully implemented:
   policy_management  — add vehicle/driver, coverage changes, renewal, SR-22
 
 Module run:  uv run python -m data_gen.generators.faq_gen
-Direct run:  uv run python data-gen/generators/faq_gen.py
+Direct run:  uv run python data_gen/generators/faq_gen.py
 """
 from __future__ import annotations
 
@@ -785,7 +785,7 @@ def main(
     output_path: Path | None = None,
     states_data: dict | None = None,
 ) -> list[dict]:
-    config_dir = Path("data-gen/config")
+    config_dir = Path("data_gen/config")
     if states_data is None:
         states_data = json.loads((config_dir / "states.json").read_text())
     if output_path is None:
@@ -2170,7 +2170,7 @@ app.include_router(rag_router)
 
 ## 10. Verification Script
 
-**`data-gen/generators/verify_rag.py`**
+**`data_gen/generators/verify_rag.py`**
 
 ```python
 """
@@ -2187,7 +2187,7 @@ Checks:
 
 Usage:
   uv run python -m data_gen.generators.verify_rag
-  uv run python data-gen/generators/verify_rag.py
+  uv run python data_gen/generators/verify_rag.py
 """
 from __future__ import annotations
 
@@ -2396,9 +2396,6 @@ docker exec iron-oak-insurance-ollama-1 ollama pull all-minilm:l6-v2
 ```bash
 # Linux / macOS
 
-# Create data_gen symlink for module invocation (one-time)
-ln -sf data-gen data_gen
-
 # Generate FAQ corpus
 uv run python -m data_gen.generators.faq_gen
 
@@ -2414,9 +2411,6 @@ uv run fastapi dev ai/api/handlers/main.py
 
 ```powershell
 # Windows
-
-# Create data_gen junction for module invocation (one-time, run as Administrator)
-New-Item -ItemType Junction -Path data_gen -Target data-gen
 
 # Generate FAQ corpus
 uv run python data_gen\generators\faq_gen.py
@@ -2449,7 +2443,7 @@ uv run fastapi dev .\ai\api\handlers\main.py
 uv run python -m data_gen.generators.verify_rag
 
 # Windows
-uv run python data-gen\generators\verify_rag.py
+uv run python data_gen\generators\verify_rag.py
 ```
 
 ### API smoke tests

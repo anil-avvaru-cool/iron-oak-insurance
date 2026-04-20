@@ -1,4 +1,5 @@
 - **Strategy**: Validate approach before acting; research the web when needed. Flag course corrections proactively.
+    - Security, compliance and legal concerns are most important than AI benefits, so, design AI/chatbot carefully.
 - **Analysis**: Thoroughly understand the codebase before making changes. Root-cause problems — no workarounds.
 - **Design**: Iterative phases with working prototypes. Simple, extensible, not over-engineered. Mark placeholders for future improvements.
     - Do not add "hyphen" in folder names, use underscore if required.

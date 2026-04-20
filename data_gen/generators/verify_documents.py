@@ -2,8 +2,8 @@
 verify_documents.py — standalone verification for generated PDFs.
 
 Usage:
-    uv run python data-gen/generators/verify_documents.py
-    uv run python data-gen/generators/verify_documents.py --dir documents/
+    uv run python data_gen/generators/verify_documents.py
+    uv run python data_gen/generators/verify_documents.py --dir documents/
 
 Checks:
     1. Output directory exists and is non-empty

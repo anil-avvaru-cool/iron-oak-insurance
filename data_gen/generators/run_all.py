@@ -2,9 +2,9 @@
 run_all.py — single entry point for all AIOI data generation.
 
 Usage:
-    uv run python data-gen/generators/run_all.py
-    uv run python data-gen/generators/run_all.py --customers 500 --fraud-rate 0.05
-    uv run python data-gen/generators/run_all.py --customers 100 --pdf-docs 50 --no-pdfs
+    uv run python data_gen/generators/run_all.py
+    uv run python data_gen/generators/run_all.py --customers 500 --fraud-rate 0.05
+    uv run python data_gen/generators/run_all.py --customers 100 --pdf-docs 50 --no-pdfs
 
 Generation order is fixed — each step depends on the previous:
     1. customers.json     (standalone)
@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-# Allow running from repo root or from data-gen/generators/
+# Allow running from repo root or from data_gen/generators/
 _GENERATORS_DIR = Path(__file__).parent
 _CONFIG_DIR = _GENERATORS_DIR.parent / "config"
 
@@ -107,7 +107,7 @@ def main() -> None:
     # ── Step 6: FAQs (Phase 4 stub) ────────────────────────────────────────
     from faq_gen import main as gen_faqs
     t0 = time.time()
-    gen_faqs(faqs_dir / "faq_corpus.json", config, states_data)
+    gen_faqs(faqs_dir / "faq_corpus.json", states_data)
     print(f"  ✓ FAQs ({time.time()-t0:.1f}s)")
 
     elapsed = time.time() - t_total

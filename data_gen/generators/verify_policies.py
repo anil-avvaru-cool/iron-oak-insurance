@@ -2,8 +2,8 @@
 verify_policies.py — standalone data quality verification for policies.json.
 
 Usage:
-    uv run python data-gen/generators/verify_policies.py
-    uv run python data-gen/generators/verify_policies.py --path data/policies.json
+    uv run python data_gen/generators/verify_policies.py
+    uv run python data_gen/generators/verify_policies.py --path data/policies.json
 
 Checks:
     1. File exists and is valid JSON

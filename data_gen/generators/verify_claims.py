@@ -2,8 +2,8 @@
 verify_claims.py — standalone data quality verification for claims.json.
 
 Usage:
-    uv run python data-gen/generators/verify_claims.py
-    uv run python data-gen/generators/verify_claims.py --path data/claims.json
+    uv run python data_gen/generators/verify_claims.py
+    uv run python data_gen/generators/verify_claims.py --path data/claims.json
 
 Checks:
     1.  File exists and is valid JSON

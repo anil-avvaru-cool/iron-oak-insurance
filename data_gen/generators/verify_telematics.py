@@ -2,8 +2,8 @@
 verify_telematics.py — standalone data quality verification for telematics.json.
 
 Usage:
-    uv run python data-gen/generators/verify_telematics.py
-    uv run python data-gen/generators/verify_telematics.py --path data/telematics.json
+    uv run python data_gen/generators/verify_telematics.py
+    uv run python data_gen/generators/verify_telematics.py --path data/telematics.json
 
 Checks:
     1. File exists and is valid JSON

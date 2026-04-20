@@ -7,7 +7,7 @@ Produces three document types:
     renewal_{POLICY_NUMBER}.pdf — Renewal notices (premium change table + prose)
 
 Usage:
-    uv run python data-gen/generators/document_gen.py
+    uv run python data_gen/generators/document_gen.py
     from document_gen import generate, main
 
 Key design decisions:
