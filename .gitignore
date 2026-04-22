@@ -26,3 +26,4 @@ infra/cdk/node_modules/
 *.onnx
 ai/models/**/*.json
 ai/models/**/fairness_reports/
+sqlOut.txt

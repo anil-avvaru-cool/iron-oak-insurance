@@ -16,6 +16,14 @@ Key design decisions:
     - No-fault state claims skew toward PIP claim type
     - Per-policy claim count drawn from Poisson distribution and hard-capped at
       MAX_CLAIMS_PER_POLICY_PER_YEAR * policy_age_years to prevent ML training outliers
+
+v1.1 fix: _policy_age_years() now uses the full policy term (effective → expiry)
+    instead of the elapsed portion (effective → min(expiry, today)).
+    Active 1-year policies were being credited only for their elapsed days,
+    causing Poisson expected value to collapse to ~0.07 and most policies
+    drawing 0 claims. Result: 5000 customers → 855 claims instead of ~4000+.
+    The incident_date generator still clamps to (effective, today) so all
+    incidents remain in the past.
 """
 from __future__ import annotations
 
@@ -111,14 +119,22 @@ _FRAUD_SIGNAL_COMBOS = [
 
 def _policy_age_years(policy: dict) -> float:
     """
-    Returns policy age in years, floored at 0.25 (3 months).
-    Used to scale the per-policy claim count cap and Poisson expected value.
+    Returns the full policy term in years for claim count modeling.
+
+    v1.1 fix: use full term (effective → expiry) not elapsed portion.
+    Active policies with future expiry dates were previously penalized by
+    min(expiry, today), collapsing Poisson expected value to ~0.07 per policy
+    and producing ~855 claims from 5000 customers instead of ~4000+.
+
+    The incident_date generator in generate() still clamps to (effective, today)
+    so all incidents remain in the past.
+
+    Floor at 0.25 (3 months) to prevent zero-exposure edge cases.
     """
     try:
         eff = date.fromisoformat(policy["effective_date"])
         exp = date.fromisoformat(policy["expiry_date"])
-        end = min(exp, date.today())
-        age_days = max((end - eff).days, 1)
+        age_days = max((exp - eff).days, 1)    # full term, not elapsed
     except (ValueError, KeyError):
         age_days = 365
     return max(age_days / 365.0, 0.25)
@@ -239,24 +255,29 @@ def generate(count: int, config: dict, states_data: dict,
         state = policy["state"]
         state_rules = states_data.get(state, {})
 
+        # Incident date window: full term for exposure modeling,
+        # but clamp end to today so incidents are always in the past.
+        try:
+            eff = date.fromisoformat(policy["effective_date"])
+            exp = date.fromisoformat(policy["expiry_date"])
+        except (ValueError, KeyError):
+            eff = date.today() - timedelta(days=365)
+            exp = date.today()
+
+        incident_end = min(exp, date.today())       # clamp to today
+        incident_start = eff
+        if incident_start >= incident_end:
+            incident_start = incident_end - timedelta(days=180)
+
         for _ in range(n_claims):
             is_fraud = random.random() < fraud_rate
             claim_type = _pick_claim_type(policy, state_rules)
             claim_amount = _claim_amount_for_type(claim_type, is_fraud)
 
-            # Incident date within policy effective period, not in future
-            try:
-                eff = date.fromisoformat(policy["effective_date"])
-                exp = date.fromisoformat(policy["expiry_date"])
-            except (ValueError, KeyError):
-                eff = date.today() - timedelta(days=365)
-                exp = date.today()
-
-            end = min(exp, date.today())
-            if eff >= end:
-                eff = end - timedelta(days=180)
-
-            incident_date = fake.date_between(start_date=eff, end_date=end)
+            incident_date = fake.date_between(
+                start_date=incident_start,
+                end_date=incident_end,
+            )
 
             # Filing lag: 0-60 days, fraud claims sometimes filed faster (urgency signal)
             if is_fraud:

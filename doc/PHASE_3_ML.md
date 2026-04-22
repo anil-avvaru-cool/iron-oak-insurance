@@ -1313,6 +1313,8 @@ uv run python -m ai.models.fairness_audit --model churn
 
 # 5. Start API
 uv run python -m ai.api.handlers.main
+uv run fastapi -m ai.api.handlers.main
+uv run fastapi dev .\ai\api\handlers\main.py
 ```
 
 ### 8.2 API smoke tests

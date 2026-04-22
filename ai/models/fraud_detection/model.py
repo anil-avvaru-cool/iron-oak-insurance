@@ -5,6 +5,17 @@ Module run:  uv run python -m ai.models.fraud_detection.model
 Library use: from ai.models.fraud_detection.model import train, predict
 Lambda use:  handler wraps predict()
 
+Design changes (v2):
+  - days_to_file added to EXCLUDE_COLS; days_to_file_log used instead.
+    Raw days_to_file had 0.82 feature importance due to synthetic artifact
+    (fraud claims filed in 0-2 days by claim_gen.py). The log-transformed
+    version is kept as a legitimate signal but no longer dominates.
+  - fraud_signal_count removed from feature set — replaced by 11 binary
+    sig_* columns produced by feature_engineer.py's unnest pivot.
+  - CATEGORICAL updated to reflect actual string columns in the query.
+  - scale_pos_weight computed from training split, not full dataset,
+    to prevent mild data leakage in the class weight calculation.
+
 Environment variables required (no defaults):
   DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
 """
@@ -25,9 +36,21 @@ from ai.utils.log import get_logger
 log = get_logger(__name__)
 
 MODEL_PATH = Path("ai/models/fraud_detection/fraud_model.json")
+
 CATEGORICAL = ["state", "claim_type", "vehicle_make"]
-# Columns excluded from model features (used for audit only)
-EXCLUDE_COLS = {"claim_id", "label", "zip_prefix", "fraud_signal_count"}
+
+# Columns excluded from model input features:
+#   claim_id, label       — identity / target
+#   zip_prefix            — kept for fairness audit only
+#   days_to_file          — raw value excluded; log-transformed version used instead
+#   fraud_signal_count    — replaced by individual sig_* binary columns
+EXCLUDE_COLS = {
+    "claim_id",
+    "label",
+    "zip_prefix",
+    "days_to_file",          # use days_to_file_log instead
+    "fraud_signal_count",    # legacy — no longer in query, but guard against old data
+}
 
 
 def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
@@ -55,29 +78,39 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    pos_weight = float((y == 0).sum()) / float((y == 1).sum())
+    # Compute scale_pos_weight from training split only (not full dataset)
+    # to avoid mild leakage from knowing the full label distribution.
+    neg_train = float((y_train == 0).sum())
+    pos_train = float((y_train == 1).sum())
+    pos_weight = neg_train / max(pos_train, 1)
+
     model = xgb.XGBClassifier(
-        n_estimators=200,
+        n_estimators=300,
         max_depth=5,
         learning_rate=0.05,
         scale_pos_weight=pos_weight,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_weight=2,
         eval_metric="auc",
         random_state=42,
         verbosity=0,
     )
     model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
 
-    preds = model.predict(X_test)    
-    proba = model.predict_proba(X_test)[:, 1]    
+    preds = model.predict(X_test)
+    proba = model.predict_proba(X_test)[:, 1]
     roc = roc_auc_score(y_test, proba)
 
-    # Print report for meetup demo
     print(classification_report(y_test, preds, target_names=["clean", "fraud"]))
 
     importance = dict(zip(X.columns, model.feature_importances_))
-    top5 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:5]
+    top10 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:10]
     print(f"ROC-AUC: {roc:.4f}")
-    print("Top features:", top5)
+    print("Top features:")
+    for feat, imp in top10:
+        bar = "█" * int(imp * 40)
+        print(f"  {feat:<45} {imp:.4f}  {bar}")
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     model.save_model(MODEL_PATH)
@@ -87,6 +120,8 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
         model="fraud",
         rows=len(df),
         fraud_rows=int(y.sum()),
+        feature_count=len(feature_cols),
+        features=feature_cols,
         roc_auc=round(roc, 4),
         elapsed_s=round(time.time() - t0, 2),
     )
@@ -95,9 +130,21 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
 
 def predict(records: list[dict]) -> list[dict]:
     """Score a batch of claim dicts. Returns records enriched with fraud_score."""
+    import numpy as np
+
     model = xgb.XGBClassifier()
     model.load_model(MODEL_PATH)
     df = pd.DataFrame(records)
+
+    # Apply the same log1p transform applied during training
+    if "days_to_file" in df.columns and "days_to_file_log" not in df.columns:
+        df["days_to_file_log"] = np.log1p(df["days_to_file"].clip(lower=0))
+
+    # Cast bool signal columns to int if present
+    sig_cols = [c for c in df.columns if c.startswith("sig_")]
+    if sig_cols:
+        df[sig_cols] = df[sig_cols].astype("Int64")
+
     df, _ = preprocess(df)
     feature_cols = _feature_cols(df)
     proba = model.predict_proba(df[feature_cols])[:, 1]
@@ -112,16 +159,27 @@ def main() -> None:
     from ai.models.fairness_audit import run_audit
 
     df = fraud_features()
-    log.info("fraud_train_start", rows=len(df), fraud_rows=int(df["label"].sum()))
-    pd.set_option('display.max_columns', None)
-    print(df.sample(n=10))
-    
+    log.info(
+        "fraud_train_start",
+        rows=len(df),
+        fraud_rows=int(df["label"].sum()),
+        fraud_pct=round(df["label"].mean() * 100, 2),
+    )
+
+    # Print feature column list so it's visible in training output
+    from ai.models.fraud_detection.model import EXCLUDE_COLS
+    feature_cols = [c for c in df.columns if c not in EXCLUDE_COLS]
+    print(f"\nFeature columns ({len(feature_cols)}):")
+    for col in sorted(feature_cols):
+        print(f"  {col}")
+    print()
+
     model = train(df)
 
     # Score full dataset for fairness audit
     df_proc, _ = preprocess(df.copy())
-    feature_cols = _feature_cols(df_proc)
-    df["predicted_score"] = model.predict_proba(df_proc[feature_cols])[:, 1]
+    feature_cols_proc = _feature_cols(df_proc)
+    df["predicted_score"] = model.predict_proba(df_proc[feature_cols_proc])[:, 1]
     run_audit(df, model_name="fraud", score_col="predicted_score", label_col="label")
 
 
