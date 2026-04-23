@@ -106,14 +106,17 @@ _FRAUD_ADJUSTER_NOTES = [
 
 # Fraud signal combinations that are internally consistent
 _FRAUD_SIGNAL_COMBOS = [
-    ["claim_delta_high", "recent_policy_reinstatement"],
-    ["claim_delta_high", "telematics_anomaly", "frequency_spike"],
+    # Telematics-based (no claim count inflation)
     ["telematics_anomaly", "incident_location_mismatch"],
-    ["frequency_spike", "rapid_refiling"],
-    ["claim_delta_high", "staged_accident_pattern", "third_party_attorney_early"],
-    ["telematics_anomaly", "claim_filed_after_lapse_reinstatement"],
-    ["frequency_spike", "claim_delta_high"],
+    ["telematics_anomaly", "claim_delta_high"],
+    # Documentation-based (no claim count inflation)
     ["staged_accident_pattern", "no_police_report", "multiple_claimants"],
+    ["staged_accident_pattern", "third_party_attorney_early"],
+    # Timing-based (no claim count inflation)
+    ["claim_delta_high", "recent_policy_reinstatement"],
+    ["claim_filed_after_lapse_reinstatement", "claim_delta_high"],
+    # Frequency-based — kept but reduced from 3/8 to 1/8 combos
+    ["frequency_spike", "rapid_refiling"],
 ]
 
 

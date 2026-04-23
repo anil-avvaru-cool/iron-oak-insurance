@@ -1,6 +1,6 @@
 ## Important commands
-uv run python data_gen/generators/run_all.py --customers 5000 --fraud-rate 0.04
-uv run python data_gen/generators/run_all.py --customers 5000 --fraud-rate 0.04 --no-pdfs
+uv run python data_gen/generators/run_all.py --customers 10000 --fraud-rate 0.04
+uv run python data_gen/generators/run_all.py --customers 10000 --fraud-rate 0.04 --no-pdfs
 
 docker compose up -d postgres
 docker compose up -d ollama

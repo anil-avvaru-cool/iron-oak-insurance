@@ -1,3 +1,15 @@
+## Fraud Evaluation examples
+1000 claims
+Actual Legit: 970 
+Actual fraud: 30 
+
+              Predicted: Legit   Predicted: Fraud
+Actual: Legit 950 True Negative     20  True Positive
+Actual: Fraud 5 False Negative      25 False Positive
+
+
+
+
 - For Policy specific question, no chunks retrieved, how to troubleshoot?
 
 Here is the request and response:

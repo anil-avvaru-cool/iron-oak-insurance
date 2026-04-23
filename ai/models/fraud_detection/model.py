@@ -30,7 +30,11 @@ from sklearn.metrics import classification_report, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import xgboost as xgb
-
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
+import matplotlib.pyplot as plt
+# Find the threshold that maximizes F1 or hits a recall target
+from sklearn.metrics import precision_recall_curve
+import numpy as np
 from ai.utils.log import get_logger
 
 log = get_logger(__name__)
@@ -54,6 +58,9 @@ EXCLUDE_COLS = {
     "days_to_file",
     # Legacy guard
     "fraud_signal_count",
+    # Lifetime claim count is too strong a separator on small synthetic datasets
+    # where fraud cases cluster by customer. Use claims_last_90d for recency signal.
+    "customer_claim_count",
     # Fraud signals — fetched for explainability (Phase 5 fraud agent) but
     # must NOT be model features: they are derived directly from is_fraud=True
     # in the generator, so including them guarantees a perfect separator and
@@ -129,6 +136,31 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
     for feat, imp in top10:
         bar = "█" * int(imp * 40)
         print(f"  {feat:<45} {imp:.4f}  {bar}")
+    
+    cm = confusion_matrix(y_test, preds)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["clean", "fraud"])
+    disp.plot(cmap="Blues")
+    plt.title(f"Fraud Detection — Confusion Matrix (ROC-AUC: {roc:.4f})")
+    plt.tight_layout()
+    plt.savefig("ai/models/fraud_detection/confusion_matrix.png", dpi=150)
+    plt.close()
+    print("Confusion matrix saved → ai/models/fraud_detection/confusion_matrix.png")
+
+    precision, recall, thresholds = precision_recall_curve(y_test, proba)
+    # Option A: maximize F1
+    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-9)
+    best_idx = np.argmax(f1_scores)
+    best_threshold = thresholds[best_idx]
+    print(f"Best F1 threshold: {best_threshold:.3f} → P={precision[best_idx]:.2f} R={recall[best_idx]:.2f}")
+
+    # Option B: target 80% recall minimum
+    recall_target = 0.80
+    viable = [(t, p, r) for p, r, t in zip(precision, recall, thresholds) if r >= recall_target]
+    if viable:
+        # pick highest precision among those meeting recall target
+        best = max(viable, key=lambda x: x[1])
+        print(f"At recall≥{recall_target}: threshold={best[0]:.3f} P={best[1]:.2f} R={best[2]:.2f}")
+
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     model.save_model(MODEL_PATH)
@@ -166,9 +198,11 @@ def predict(records: list[dict]) -> list[dict]:
     df, _ = preprocess(df)
     feature_cols = _feature_cols(df)
     proba = model.predict_proba(df[feature_cols])[:, 1]
+    # Load threshold from config instead of hardcoding 0.5
+    FRAUD_THRESHOLD = float(os.getenv("FRAUD_THRESHOLD"))
     for i, rec in enumerate(records):
         rec["fraud_score"] = round(float(proba[i]), 4)
-        rec["is_fraud_predicted"] = bool(proba[i] >= 0.5)
+        rec["is_fraud_predicted"] = bool(proba[i] >= FRAUD_THRESHOLD)
     return records
 
 

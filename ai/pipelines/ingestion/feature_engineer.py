@@ -64,42 +64,49 @@ def fraud_features(engine=None) -> pd.DataFrame:
         c.is_fraud,
         c.claim_amount,
         c.claim_amount / NULLIF(p.premium_annual / 12.0, 0) AS claim_to_monthly_premium_ratio,
-        c.filed_date::date - c.incident_date::date AS days_to_file,
-        EXTRACT(DOW FROM c.incident_date::date) AS incident_day_of_week,
+        c.filed_date::date - c.incident_date::date           AS days_to_file,
+        EXTRACT(DOW FROM c.incident_date::date)              AS incident_day_of_week,
 
-        -- Window functions
-        COUNT(c2.claim_id) OVER (PARTITION BY c.customer_id) AS customer_claim_count,
-        COUNT(c2.claim_id) OVER (
-            PARTITION BY c.customer_id
-            ORDER BY c.filed_date
-            RANGE BETWEEN INTERVAL '90 days' PRECEDING AND CURRENT ROW
+        -- FIXED: prior claims only, excludes self and future claims
+        (
+            SELECT COUNT(*)
+            FROM claims c2
+            WHERE c2.customer_id = c.customer_id
+              AND c2.claim_id   != c.claim_id
+              AND c2.filed_date  < c.filed_date
+        ) AS customer_claim_count,
+
+        (
+            SELECT COUNT(*)
+            FROM claims c2
+            WHERE c2.customer_id = c.customer_id
+              AND c2.claim_id   != c.claim_id
+              AND c2.filed_date  < c.filed_date
+              AND c2.filed_date >= c.filed_date - INTERVAL '90 days'
         ) AS claims_last_90d,
 
-        COALESCE(t.avg_drive_score, 50) AS avg_drive_score,
-        COALESCE(t.hard_brakes_90d, 0) AS hard_brakes_90d,
-        COALESCE(t.speeding_events_90d, 0) AS speeding_events_90d,
-
+        COALESCE(t.avg_drive_score, 50)       AS avg_drive_score,
+        COALESCE(t.hard_brakes_90d, 0)        AS hard_brakes_90d,
+        COALESCE(t.speeding_events_90d, 0)    AS speeding_events_90d,
         p.state,
-        p.vehicle->>'make' AS vehicle_make,
-        LEFT(cust.zip, 3) AS zip_prefix,
+        p.vehicle->>'make'                    AS vehicle_make,
+        LEFT(cust.zip, 3)                     AS zip_prefix,
         c.claim_type,
         s.signal
     FROM claims c
-    JOIN policies p       ON p.policy_number = c.policy_number
-    JOIN customers cust   ON cust.customer_id = c.customer_id
-    LEFT JOIN claims c2   ON c2.customer_id = c.customer_id
+    JOIN policies p     ON p.policy_number  = c.policy_number
+    JOIN customers cust ON cust.customer_id = c.customer_id
     LEFT JOIN (
         SELECT policy_number,
-               AVG(drive_score) AS avg_drive_score,
-               SUM(hard_brakes) AS hard_brakes_90d,
-               SUM(speeding_events) AS speeding_events_90d
+               AVG(drive_score)       AS avg_drive_score,
+               SUM(hard_brakes)       AS hard_brakes_90d,
+               SUM(speeding_events)   AS speeding_events_90d
         FROM telematics
         WHERE trip_date >= NOW() - INTERVAL '90 days'
         GROUP BY policy_number
     ) t ON t.policy_number = c.policy_number
     LEFT JOIN LATERAL unnest(c.fraud_signals) AS s(signal) ON TRUE
 )
-
 SELECT
     claim_id,
     is_fraud AS label,
@@ -116,8 +123,6 @@ SELECT
     vehicle_make,
     zip_prefix,
     claim_type,
-    -- Fraud signal columns: returned for Phase 5 agent explainability only.
-    -- Excluded from XGBoost feature matrix via EXCLUDE_COLS in model.py.
     BOOL_OR(signal = 'claim_delta_high')                      AS sig_claim_delta_high,
     BOOL_OR(signal = 'telematics_anomaly')                    AS sig_telematics_anomaly,
     BOOL_OR(signal = 'staged_accident_pattern')               AS sig_staged_accident,
@@ -129,7 +134,6 @@ SELECT
     BOOL_OR(signal = 'claim_filed_after_lapse_reinstatement') AS sig_lapse_reinstatement,
     BOOL_OR(signal = 'rapid_refiling')                        AS sig_rapid_refiling,
     BOOL_OR(signal = 'recent_policy_reinstatement')           AS sig_recent_reinstatement
-
 FROM base
 GROUP BY
     claim_id, is_fraud,
