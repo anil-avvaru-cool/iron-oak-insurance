@@ -279,9 +279,16 @@ def generate(count: int, config: dict, states_data: dict,
                 end_date=incident_end,
             )
 
-            # Filing lag: 0-60 days, fraud claims sometimes filed faster (urgency signal)
+            # Filing lag: fraud claims skew fast but have realistic variance
             if is_fraud:
-                lag_days = random.choices([0, 1, 2], weights=[40, 35, 25])[0]
+                # 50% file within 3 days (urgency signal), 50% file normally
+                # This preserves the signal while preventing it from being a cheat code
+                if random.random() < 0.50:
+                    lag_days = random.choices([0, 1, 2, 3], weights=[30, 30, 25, 15])[0]
+                else:
+                    lag_days = random.choices(
+                        range(0, 61), weights=[max(1, 60 - i) for i in range(61)]
+                    )[0]
             else:
                 lag_days = random.choices(
                     range(0, 61), weights=[max(1, 60 - i) for i in range(61)]

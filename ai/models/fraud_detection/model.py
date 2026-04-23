@@ -45,13 +45,31 @@ CATEGORICAL = ["state", "claim_type", "vehicle_make"]
 #   days_to_file          — raw value excluded; log-transformed version used instead
 #   fraud_signal_count    — replaced by individual sig_* binary columns
 EXCLUDE_COLS = {
+    # Identity / target
     "claim_id",
     "label",
+    # Fairness audit only
     "zip_prefix",
-    "days_to_file",          # use days_to_file_log instead
-    "fraud_signal_count",    # legacy — no longer in query, but guard against old data
+    # Raw value replaced by log-transformed version
+    "days_to_file",
+    # Legacy guard
+    "fraud_signal_count",
+    # Fraud signals — fetched for explainability (Phase 5 fraud agent) but
+    # must NOT be model features: they are derived directly from is_fraud=True
+    # in the generator, so including them guarantees a perfect separator and
+    # produces an unrealistically high ROC-AUC on synthetic data.
+    "sig_claim_delta_high",
+    "sig_telematics_anomaly",
+    "sig_staged_accident",
+    "sig_frequency_spike",
+    "sig_location_mismatch",
+    "sig_multiple_claimants",
+    "sig_no_police_report",
+    "sig_attorney_early",
+    "sig_lapse_reinstatement",
+    "sig_rapid_refiling",
+    "sig_recent_reinstatement",
 }
-
 
 def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
     df = df.copy().fillna(0)

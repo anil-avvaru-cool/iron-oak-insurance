@@ -1,6 +1,4 @@
-docker exec iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c `
-  "SELECT status, COUNT(*) FROM policies GROUP BY status ORDER BY count DESC;" > sqlout.txt
-
+## Important commands
 uv run python data_gen/generators/run_all.py --customers 5000 --fraud-rate 0.04
 uv run python data_gen/generators/run_all.py --customers 5000 --fraud-rate 0.04 --no-pdfs
 

@@ -116,8 +116,8 @@ SELECT
     vehicle_make,
     zip_prefix,
     claim_type,
-
-    -- Aggregations on unpivoted fraud signals
+    -- Fraud signal columns: returned for Phase 5 agent explainability only.
+    -- Excluded from XGBoost feature matrix via EXCLUDE_COLS in model.py.
     BOOL_OR(signal = 'claim_delta_high')                      AS sig_claim_delta_high,
     BOOL_OR(signal = 'telematics_anomaly')                    AS sig_telematics_anomaly,
     BOOL_OR(signal = 'staged_accident_pattern')               AS sig_staged_accident,
