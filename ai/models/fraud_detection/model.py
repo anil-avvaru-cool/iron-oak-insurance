@@ -21,7 +21,9 @@ Environment variables required (no defaults):
 """
 from __future__ import annotations
 
+import json
 import os
+from dotenv import load_dotenv
 import time
 from pathlib import Path
 
@@ -38,6 +40,7 @@ import numpy as np
 from ai.utils.log import get_logger
 
 log = get_logger(__name__)
+load_dotenv()
 
 MODEL_PATH = Path("ai/models/fraud_detection/fraud_model.json")
 
@@ -78,6 +81,8 @@ EXCLUDE_COLS = {
     "sig_recent_reinstatement",
 }
 
+_FRAUD_THRESHOLD_DEFAULT = 0.50
+
 def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
     df = df.copy().fillna(0)
     encoders: dict[str, LabelEncoder] = {}
@@ -103,40 +108,42 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    # Compute scale_pos_weight from training split only (not full dataset)
-    # to avoid mild leakage from knowing the full label distribution.
-    neg_train = float((y_train == 0).sum())
-    pos_train = float((y_train == 1).sum())
-    pos_weight = neg_train / max(pos_train, 1)
-
+    pos_weight = float((y_train == 0).sum()) / float((y_train == 1).sum())
     model = xgb.XGBClassifier(
-        n_estimators=300,
+        n_estimators=200,
         max_depth=5,
         learning_rate=0.05,
         scale_pos_weight=pos_weight,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        min_child_weight=2,
-        eval_metric="auc",
+        eval_metric="aucpr",
+        early_stopping_rounds=20,
         random_state=42,
         verbosity=0,
     )
     model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
 
-    preds = model.predict(X_test)
     proba = model.predict_proba(X_test)[:, 1]
-    roc = roc_auc_score(y_test, proba)
+    roc   = roc_auc_score(y_test, proba)
 
-    print(classification_report(y_test, preds, target_names=["clean", "fraud"]))
+    # Compute threshold from data — do not use env var during training
+    chosen_threshold = _select_threshold(proba, y_test.values)
+
+    preds = (proba >= chosen_threshold).astype(int)
+    print(f"\nClassification report at threshold={chosen_threshold:.2f} (computed)")
+    print(classification_report(y_test, preds, target_names=["clean", "fraud"],
+                                zero_division=0))
+
+    # 0.5 for reference only
+    preds_default = (proba >= 0.50).astype(int)
+    print("Classification report at threshold=0.50 (default, for comparison)")
+    print(classification_report(y_test, preds_default, target_names=["clean", "fraud"],
+                                zero_division=0))
 
     importance = dict(zip(X.columns, model.feature_importances_))
     top10 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:10]
     print(f"ROC-AUC: {roc:.4f}")
-    print("Top features:")
     for feat, imp in top10:
         bar = "█" * int(imp * 40)
         print(f"  {feat:<45} {imp:.4f}  {bar}")
-    
     cm = confusion_matrix(y_test, preds)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["clean", "fraud"])
     disp.plot(cmap="Blues")
@@ -146,65 +153,93 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
     plt.close()
     print("Confusion matrix saved → ai/models/fraud_detection/confusion_matrix.png")
 
-    precision, recall, thresholds = precision_recall_curve(y_test, proba)
-    # Option A: maximize F1
-    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-9)
-    best_idx = np.argmax(f1_scores)
-    best_threshold = thresholds[best_idx]
-    print(f"Best F1 threshold: {best_threshold:.3f} → P={precision[best_idx]:.2f} R={recall[best_idx]:.2f}")
-
-    # Option B: target 80% recall minimum
-    recall_target = 0.80
-    viable = [(t, p, r) for p, r, t in zip(precision, recall, thresholds) if r >= recall_target]
-    if viable:
-        # pick highest precision among those meeting recall target
-        best = max(viable, key=lambda x: x[1])
-        print(f"At recall≥{recall_target}: threshold={best[0]:.3f} P={best[1]:.2f} R={best[2]:.2f}")
-
-
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     model.save_model(MODEL_PATH)
+
+    threshold_path = MODEL_PATH.with_suffix(".threshold.json")
+    threshold_path.write_text(json.dumps({"fraud_threshold": chosen_threshold}))
+    print(f"Threshold saved → {threshold_path}")
 
     log.info(
         "model_trained",
         model="fraud",
         rows=len(df),
         fraud_rows=int(y.sum()),
-        feature_count=len(feature_cols),
-        features=feature_cols,
+        threshold=chosen_threshold,
         roc_auc=round(roc, 4),
         elapsed_s=round(time.time() - t0, 2),
     )
     return model
 
-
 def predict(records: list[dict]) -> list[dict]:
-    """Score a batch of claim dicts. Returns records enriched with fraud_score."""
-    import numpy as np
-
     model = xgb.XGBClassifier()
     model.load_model(MODEL_PATH)
+
+    # Threshold priority: saved file → env var override → hardcoded default
+    threshold_path = MODEL_PATH.with_suffix(".threshold.json")
+    if threshold_path.exists():
+        threshold = float(json.loads(threshold_path.read_text())["fraud_threshold"])
+    else:
+        # Env var as operational override — optional, no default in os.environ call
+        threshold = float(os.environ.get("FRAUD_THRESHOLD", str(_FRAUD_THRESHOLD_DEFAULT)))
+
     df = pd.DataFrame(records)
-
-    # Apply the same log1p transform applied during training
-    if "days_to_file" in df.columns and "days_to_file_log" not in df.columns:
-        df["days_to_file_log"] = np.log1p(df["days_to_file"].clip(lower=0))
-
-    # Cast bool signal columns to int if present
-    sig_cols = [c for c in df.columns if c.startswith("sig_")]
-    if sig_cols:
-        df[sig_cols] = df[sig_cols].astype("Int64")
-
     df, _ = preprocess(df)
     feature_cols = _feature_cols(df)
     proba = model.predict_proba(df[feature_cols])[:, 1]
-    # Load threshold from config instead of hardcoding 0.5
-    FRAUD_THRESHOLD = float(os.getenv("FRAUD_THRESHOLD"))
+
     for i, rec in enumerate(records):
-        rec["fraud_score"] = round(float(proba[i]), 4)
-        rec["is_fraud_predicted"] = bool(proba[i] >= FRAUD_THRESHOLD)
+        rec["fraud_score"]        = round(float(proba[i]), 4)
+        rec["is_fraud_predicted"] = bool(proba[i] >= threshold)
+        rec["threshold_used"]     = threshold
     return records
 
+def _select_threshold(proba: np.ndarray, y_true: np.ndarray) -> float:
+    """
+    Select the threshold that maximizes F1 on the fraud class,
+    subject to a minimum precision floor of 0.20.
+
+    A precision floor prevents the degenerate case where the optimizer
+    picks a threshold so low that every claim is flagged as fraud
+    (100% recall, ~5% precision). SIU investigators need at least 1-in-5
+    referrals to be real fraud to make the queue actionable.
+
+    Falls back to the F1-optimal threshold without the floor if no
+    threshold satisfies the constraint (rare on very small test sets).
+    """
+    precisions, recalls, thresholds = precision_recall_curve(y_true, proba)
+    # precision_recall_curve returns len(thresholds) == len(precisions) - 1
+    # The last element of precisions/recalls has no corresponding threshold
+    precisions = precisions[:-1]
+    recalls    = recalls[:-1]
+
+    MIN_PRECISION = 0.20
+
+    f1_scores = np.where(
+        (precisions + recalls) > 0,
+        2 * precisions * recalls / (precisions + recalls),
+        0.0,
+    )
+
+    # Constrained: best F1 where precision >= floor
+    eligible = precisions >= MIN_PRECISION
+    if eligible.any():
+        best_idx = np.argmax(np.where(eligible, f1_scores, 0.0))
+    else:
+        # Floor not achievable — fall back to unconstrained F1 max
+        best_idx = np.argmax(f1_scores)
+
+    chosen = float(thresholds[best_idx])
+    # Round to 2 decimal places — avoids spurious precision in saved file
+    chosen = round(chosen, 2)
+
+    print(f"\nThreshold selection:")
+    print(f"  Candidates evaluated: {len(thresholds)}")
+    print(f"  Chosen threshold:     {chosen:.2f}")
+    print(f"  At this threshold → precision={precisions[best_idx]:.2f}  "
+          f"recall={recalls[best_idx]:.2f}  f1={f1_scores[best_idx]:.2f}")
+    print(f"  Min precision floor:  {MIN_PRECISION}")
+    return chosen
 
 def main() -> None:
     from ai.pipelines.ingestion.feature_engineer import fraud_features

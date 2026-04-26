@@ -46,7 +46,9 @@ CREATE TABLE claims (
     adjuster_notes     TEXT,
     incident_narrative TEXT,
     is_fraud           BOOLEAN      NOT NULL DEFAULT FALSE,
-    fraud_signals      TEXT[],
+    fraud_signals      TEXT[],    
+    reported_passengers  SMALLINT,
+    num_witnesses        SMALLINT,
     source             VARCHAR(50)  NOT NULL DEFAULT 'synthetic-v1'
 );
 
@@ -83,6 +85,20 @@ CREATE TABLE document_chunks (
     created_at      TIMESTAMPTZ  DEFAULT NOW()
 );
 
+CREATE TABLE iso_claim_history (
+    id               SERIAL PRIMARY KEY,
+    customer_id      VARCHAR(20) REFERENCES customers(customer_id),
+    vin              CHAR(17),
+    prior_carrier    VARCHAR(50),
+    prior_claim_date DATE,
+    prior_claim_type VARCHAR(50),
+    prior_claim_amount NUMERIC(12,2),
+    role             VARCHAR(20),
+    fraud_indicator  BOOLEAN DEFAULT FALSE,
+    source           VARCHAR(50) DEFAULT 'synthetic-iso-v1'
+);
+
+
 -- ── Indexes ────────────────────────────────────────────────────────────────
 CREATE INDEX idx_policies_customer   ON policies(customer_id);
 CREATE INDEX idx_policies_state      ON policies(state);
@@ -96,6 +112,9 @@ CREATE INDEX idx_claims_status       ON claims(status);
 
 CREATE INDEX idx_telematics_policy   ON telematics(policy_number);
 CREATE INDEX idx_telematics_customer ON telematics(customer_id);
+
+CREATE INDEX idx_iso_customer ON iso_claim_history(customer_id);
+CREATE INDEX idx_iso_vin      ON iso_claim_history(vin);
 
 CREATE INDEX idx_chunks_source_type  ON document_chunks(source_type);
 CREATE INDEX idx_chunks_policy       ON document_chunks(policy_number);

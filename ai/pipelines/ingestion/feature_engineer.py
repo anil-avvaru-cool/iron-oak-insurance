@@ -38,7 +38,6 @@ def get_engine():
     )
     return create_engine(url)
 
-
 def fraud_features(engine=None) -> pd.DataFrame:
     """
     Returns one row per claim with fraud label and feature columns.
@@ -49,12 +48,24 @@ def fraud_features(engine=None) -> pd.DataFrame:
         feature the model can learn from, rather than a useless count.
       - days_to_file is included but the model.py applies log1p transform
         to reduce its dominance from the synthetic filing-lag artifact.
-      - claim_to_premium_ratio uses monthly premium (premium_annual/12) as
-        denominator so a $10K claim on a $1200/yr policy reads as 10.0x
+      - claim_to_monthly_premium_ratio uses monthly premium (premium_annual/12)
+        as denominator so a $10K claim on a $1200/yr policy reads as 10.0x
         monthly, not 0.83x annual — more intuitive and consistent scale.
-      - customer_claim_count uses a window function over ALL claims for that
-        customer, so repeat filers score higher regardless of which claim
-        is being evaluated.
+      - customer_claim_count uses prior claims only (excludes self and future)
+        so repeat filers score higher regardless of which claim is evaluated.
+      - days_since_inception / near_inception / near_expiry: claims filed
+        within 30 days of policy start or 10 days before expiry are a strong
+        fraud timing signal.
+      - late_reporting: binary flag for filing lag > 3 days. Kept separate
+        from days_to_file_log so the model has both continuous and threshold
+        representations of the same signal.
+      - premium_to_credit_ratio: expensive policy relative to credit score
+        proxies for vehicle-value-vs-income mismatch.
+      - ISO features: cross-carrier claim history aggregated per customer.
+        iso_prior_fraud_flag_count and iso_prior_carrier_count are expected
+        to rank in top-5 SHAP importances.
+      - iso_vin_claimant_count: number of distinct customers who have filed
+        claims on the same VIN across carriers — VIN re-use / salvage signal.
     """
     engine = engine or get_engine()
     sql = text("""
@@ -65,9 +76,22 @@ def fraud_features(engine=None) -> pd.DataFrame:
         c.claim_amount,
         c.claim_amount / NULLIF(p.premium_annual / 12.0, 0) AS claim_to_monthly_premium_ratio,
         c.filed_date::date - c.incident_date::date           AS days_to_file,
+        CASE WHEN (c.filed_date::date - c.incident_date::date) > 3
+             THEN 1 ELSE 0 END                               AS late_reporting,
         EXTRACT(DOW FROM c.incident_date::date)              AS incident_day_of_week,
 
-        -- FIXED: prior claims only, excludes self and future claims
+        -- Policy timing signals
+        c.incident_date::date - p.effective_date             AS days_since_inception,
+        p.expiry_date - c.incident_date::date                AS days_until_expiry,
+        CASE WHEN (c.incident_date::date - p.effective_date) <= 30
+             THEN 1 ELSE 0 END                               AS near_inception,
+        CASE WHEN (p.expiry_date - c.incident_date::date) <= 10
+             THEN 1 ELSE 0 END                               AS near_expiry,
+
+        -- Vehicle value vs income proxy
+        p.premium_annual / NULLIF(cust.credit_score, 0)      AS premium_to_credit_ratio,
+
+        -- Prior claims (excludes self and future)
         (
             SELECT COUNT(*)
             FROM claims c2
@@ -92,7 +116,21 @@ def fraud_features(engine=None) -> pd.DataFrame:
         p.vehicle->>'make'                    AS vehicle_make,
         LEFT(cust.zip, 3)                     AS zip_prefix,
         c.claim_type,
-        s.signal
+        c.reported_passengers,
+        c.num_witnesses,
+        s.signal,
+
+        -- ISO aggregate features
+        COALESCE(iso.iso_prior_claim_count, 0)      AS iso_prior_claim_count,
+        COALESCE(iso.iso_prior_carrier_count, 0)    AS iso_prior_carrier_count,
+        COALESCE(iso.iso_prior_fraud_flag_count, 0) AS iso_prior_fraud_flag_count,
+        COALESCE(
+            c.incident_date::date - iso.iso_last_claim_date, 999
+        )                                           AS iso_days_since_last_claim,
+
+        -- VIN re-use signal
+        COALESCE(vin_iso.iso_vin_claimant_count, 1) AS iso_vin_claimant_count
+
     FROM claims c
     JOIN policies p     ON p.policy_number  = c.policy_number
     JOIN customers cust ON cust.customer_id = c.customer_id
@@ -105,62 +143,91 @@ def fraud_features(engine=None) -> pd.DataFrame:
         WHERE trip_date >= NOW() - INTERVAL '90 days'
         GROUP BY policy_number
     ) t ON t.policy_number = c.policy_number
+    LEFT JOIN LATERAL (
+        SELECT
+            LEAST(COUNT(*), 5)                    AS iso_prior_claim_count,
+            COUNT(DISTINCT prior_carrier)         AS iso_prior_carrier_count,
+            LEAST(SUM(fraud_indicator::int), 3)   AS iso_prior_fraud_flag_count,
+            MAX(prior_claim_date)                 AS iso_last_claim_date
+        FROM iso_claim_history h
+        WHERE h.customer_id = c.customer_id
+          AND h.prior_claim_date < c.filed_date
+    ) iso ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT
+            LEAST(COUNT(DISTINCT customer_id), 5) AS iso_vin_claimant_count
+        FROM iso_claim_history h
+        WHERE h.vin = p.vehicle->>'vin'
+          AND h.prior_claim_date < c.filed_date
+    ) vin_iso ON TRUE
     LEFT JOIN LATERAL unnest(c.fraud_signals) AS s(signal) ON TRUE
-)
-SELECT
-    claim_id,
-    is_fraud AS label,
-    claim_amount,
-    claim_to_monthly_premium_ratio,
-    days_to_file,
-    incident_day_of_week,
-    customer_claim_count,
-    claims_last_90d,
-    avg_drive_score,
-    hard_brakes_90d,
-    speeding_events_90d,
-    state,
-    vehicle_make,
-    zip_prefix,
-    claim_type,
-    BOOL_OR(signal = 'claim_delta_high')                      AS sig_claim_delta_high,
-    BOOL_OR(signal = 'telematics_anomaly')                    AS sig_telematics_anomaly,
-    BOOL_OR(signal = 'staged_accident_pattern')               AS sig_staged_accident,
-    BOOL_OR(signal = 'frequency_spike')                       AS sig_frequency_spike,
-    BOOL_OR(signal = 'incident_location_mismatch')            AS sig_location_mismatch,
-    BOOL_OR(signal = 'multiple_claimants')                    AS sig_multiple_claimants,
-    BOOL_OR(signal = 'no_police_report')                      AS sig_no_police_report,
-    BOOL_OR(signal = 'third_party_attorney_early')            AS sig_attorney_early,
-    BOOL_OR(signal = 'claim_filed_after_lapse_reinstatement') AS sig_lapse_reinstatement,
-    BOOL_OR(signal = 'rapid_refiling')                        AS sig_rapid_refiling,
-    BOOL_OR(signal = 'recent_policy_reinstatement')           AS sig_recent_reinstatement
-FROM base
-GROUP BY
-    claim_id, is_fraud,
-    claim_amount, claim_to_monthly_premium_ratio,
-    days_to_file, incident_day_of_week,
-    customer_claim_count, claims_last_90d,
-    avg_drive_score, hard_brakes_90d, speeding_events_90d,
-    state, vehicle_make, zip_prefix, claim_type;
+    )
+    SELECT
+        claim_id,
+        is_fraud AS label,
+        claim_amount,
+        claim_to_monthly_premium_ratio,
+        days_to_file,
+        late_reporting,
+        incident_day_of_week,
+        days_since_inception,
+        days_until_expiry,
+        near_inception,
+        near_expiry,
+        premium_to_credit_ratio,
+        customer_claim_count,
+        claims_last_90d,
+        avg_drive_score,
+        hard_brakes_90d,
+        speeding_events_90d,
+        state,
+        vehicle_make,
+        zip_prefix,
+        claim_type,
+        reported_passengers,
+        num_witnesses,
+        iso_prior_claim_count,
+        iso_prior_carrier_count,
+        iso_prior_fraud_flag_count,
+        iso_days_since_last_claim,
+        iso_vin_claimant_count,
+        BOOL_OR(signal = 'claim_delta_high')                      AS sig_claim_delta_high,
+        BOOL_OR(signal = 'telematics_anomaly')                    AS sig_telematics_anomaly,
+        BOOL_OR(signal = 'staged_accident_pattern')               AS sig_staged_accident,
+        BOOL_OR(signal = 'frequency_spike')                       AS sig_frequency_spike,
+        BOOL_OR(signal = 'incident_location_mismatch')            AS sig_location_mismatch,
+        BOOL_OR(signal = 'multiple_claimants')                    AS sig_multiple_claimants,
+        BOOL_OR(signal = 'no_police_report')                      AS sig_no_police_report,
+        BOOL_OR(signal = 'third_party_attorney_early')            AS sig_attorney_early,
+        BOOL_OR(signal = 'claim_filed_after_lapse_reinstatement') AS sig_lapse_reinstatement,
+        BOOL_OR(signal = 'rapid_refiling')                        AS sig_rapid_refiling,
+        BOOL_OR(signal = 'recent_policy_reinstatement')           AS sig_recent_reinstatement
+    FROM base
+    GROUP BY
+        claim_id, is_fraud,
+        claim_amount, claim_to_monthly_premium_ratio,
+        days_to_file, late_reporting, incident_day_of_week,
+        days_since_inception, days_until_expiry, near_inception, near_expiry,
+        premium_to_credit_ratio,
+        customer_claim_count, claims_last_90d,
+        avg_drive_score, hard_brakes_90d, speeding_events_90d,
+        state, vehicle_make, zip_prefix, claim_type,
+        reported_passengers, num_witnesses,
+        iso_prior_claim_count, iso_prior_carrier_count,
+        iso_prior_fraud_flag_count, iso_days_since_last_claim,
+        iso_vin_claimant_count;
     """)
     df = pd.read_sql(sql, engine)
 
-    # Apply log1p transform to days_to_file to reduce synthetic artifact dominance.
-    # The raw value had 0.82 feature importance due to the 0-2 day filing lag
-    # injected for fraud claims in claim_gen.py. log1p compresses the scale
-    # while preserving the signal for legitimate use (very late filing is still
-    # a real fraud indicator in production data).
+    # log1p transform on days_to_file — see original comment above
     import numpy as np
     df["days_to_file_log"] = np.log1p(df["days_to_file"].clip(lower=0))
-    # Keep raw value for interpretability / debugging but exclude from model features
-    # by adding it to EXCLUDE_COLS in model.py
 
-    # Cast boolean signal columns to int (XGBoost handles both, but int is explicit)
+    # Cast boolean signal columns to int
     sig_cols = [c for c in df.columns if c.startswith("sig_")]
-    df[sig_cols] = df[sig_cols].astype("Int64")  # Use nullable integer type to preserve NaNs if any
+    df[sig_cols] = df[sig_cols].astype("Int64")
 
     return df
-
 
 def risk_features(engine=None) -> pd.DataFrame:
     """Returns one row per policy for risk scoring.

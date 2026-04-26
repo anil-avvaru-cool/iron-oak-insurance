@@ -7,12 +7,13 @@ Usage:
     uv run python data_gen/generators/run_all.py --customers 100 --pdf-docs 50 --no-pdfs
 
 Generation order is fixed — each step depends on the previous:
-    1. customers.json     (standalone)
-    2. policies.json      (reads customers.json)
-    3. claims.json        (reads policies.json)
-    4. telematics.json    (reads policies.json; skips non-enrolled)
-    5. PDFs               (reads customers/policies/claims)
-    6. FAQs               (Phase 4 stub — no-op until Phase 4)
+    1. customers.json           (standalone)
+    2. policies.json            (reads customers.json)
+    3. claims.json              (reads policies.json)
+    4. iso_claim_history.json   (reads customers/policies/claims)  # NEW
+    5. telematics.json          (reads policies.json; skips non-enrolled)
+    6. PDFs                     (reads customers/policies/claims)
+    7. FAQs                     (Phase 4 stub — no-op until Phase 4)
 """
 import argparse
 import json
@@ -20,7 +21,6 @@ import sys
 import time
 from pathlib import Path
 
-# Allow running from repo root or from data_gen/generators/
 _GENERATORS_DIR = Path(__file__).parent
 _CONFIG_DIR = _GENERATORS_DIR.parent / "config"
 
@@ -89,13 +89,27 @@ def main() -> None:
     gen_claims(args.customers, data_dir / "claims.json", config, states_data)
     print(f"  ✓ claims ({time.time()-t0:.1f}s)")
 
-    # ── Step 4: Telematics ─────────────────────────────────────────────────
+    # ── Step 4: ISO Claim History ──────────────────────────────────────────  # NEW
+    from iso_gen import main as gen_iso                                        # NEW
+    t0 = time.time()                                                           # NEW
+    customers_data = json.loads((data_dir / "customers.json").read_text())     # NEW
+    policies_data  = json.loads((data_dir / "policies.json").read_text())      # NEW
+    claims_data    = json.loads((data_dir / "claims.json").read_text())        # NEW
+    gen_iso(                                                                   # NEW
+        output_path=data_dir / "iso_claim_history.json",                      # NEW
+        customers=customers_data,                                              # NEW
+        policies=policies_data,                                                # NEW
+        claims=claims_data,                                                    # NEW
+    )                                                                          # NEW
+    print(f"  ✓ ISO claim history ({time.time()-t0:.1f}s)")                    # NEW
+
+    # ── Step 5: Telematics ─────────────────────────────────────────────────
     from telematics_gen import main as gen_telematics
     t0 = time.time()
     gen_telematics(args.trips_target, data_dir / "telematics.json", config, states_data)
     print(f"  ✓ telematics ({time.time()-t0:.1f}s)")
 
-    # ── Step 5: PDFs (optional) ────────────────────────────────────────────
+    # ── Step 6: PDFs (optional) ────────────────────────────────────────────
     if not args.no_pdfs:
         from document_gen import main as gen_documents
         t0 = time.time()
@@ -104,7 +118,7 @@ def main() -> None:
     else:
         print("  – PDFs skipped (--no-pdfs)")
 
-    # ── Step 6: FAQs (Phase 4 stub) ────────────────────────────────────────
+    # ── Step 7: FAQs (Phase 4 stub) ────────────────────────────────────────
     from faq_gen import main as gen_faqs
     t0 = time.time()
     gen_faqs(faqs_dir / "faq_corpus.json", states_data)
@@ -114,13 +128,14 @@ def main() -> None:
     print(f"\n{'='*55}")
     print(f"  ✓ Generation complete in {elapsed:.1f}s")
     print(f"{'='*55}")
-    print(f"  data/customers.json   → {data_dir}/customers.json")
-    print(f"  data/policies.json    → {data_dir}/policies.json")
-    print(f"  data/claims.json      → {data_dir}/claims.json")
-    print(f"  data/telematics.json  → {data_dir}/telematics.json")
+    print(f"  data/customers.json         → {data_dir}/customers.json")
+    print(f"  data/policies.json          → {data_dir}/policies.json")
+    print(f"  data/claims.json            → {data_dir}/claims.json")
+    print(f"  data/iso_claim_history.json → {data_dir}/iso_claim_history.json")  # NEW
+    print(f"  data/telematics.json        → {data_dir}/telematics.json")
     if not args.no_pdfs:
-        print(f"  documents/            → {docs_dir}/")
-    print(f"  faqs/faq_corpus.json  → {faqs_dir}/faq_corpus.json")
+        print(f"  documents/                  → {docs_dir}/")
+    print(f"  faqs/faq_corpus.json        → {faqs_dir}/faq_corpus.json")
     print()
 
 

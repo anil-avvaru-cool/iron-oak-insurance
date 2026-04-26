@@ -16,6 +16,8 @@ Key design decisions:
     - No-fault state claims skew toward PIP claim type
     - Per-policy claim count drawn from Poisson distribution and hard-capped at
       MAX_CLAIMS_PER_POLICY_PER_YEAR * policy_age_years to prevent ML training outliers
+    - reported_passengers: fraud claims skew toward more passengers (jump-in signal)
+    - num_witnesses: fraud claims skew toward more convenient witnesses
 
 v1.1 fix: _policy_age_years() now uses the full policy term (effective → expiry)
     instead of the elapsed portion (effective → min(expiry, today)).
@@ -43,12 +45,8 @@ random.seed(44)
 
 # ---------------------------------------------------------------------------
 # Per-policy claim count limits
-# Industry average is ~0.28 claims/policy/year (claim_rate_per_policy).
-# Poisson draw models the natural randomness of rare independent events.
-# Hard cap prevents synthetic outliers from corrupting ML training targets —
-# no real policy accumulates 198 lifetime claims.
 # ---------------------------------------------------------------------------
-MAX_CLAIMS_PER_POLICY_PER_YEAR = 3   # catastrophic single-policy ceiling
+MAX_CLAIMS_PER_POLICY_PER_YEAR = 3
 _rng = np.random.default_rng(seed=44)
 
 _CLAIM_TYPES = ["collision", "comprehensive", "liability", "pip", "uninsured_motorist"]
@@ -95,7 +93,6 @@ _ADJUSTER_NOTES_TEMPLATES = [
     "Customer submitted repair receipts. Within estimated range. Approved for payment.",
 ]
 
-# Fraud-specific adjuster notes
 _FRAUD_ADJUSTER_NOTES = [
     "Claim flagged by automated system for review. Multiple signals identified — refer to SIU.",
     "SIU referral initiated. Claim frequency inconsistent with driving profile. Escalating.",
@@ -104,18 +101,13 @@ _FRAUD_ADJUSTER_NOTES = [
     "Claim amount significantly exceeds vehicle ACV. Independent appraisal ordered.",
 ]
 
-# Fraud signal combinations that are internally consistent
 _FRAUD_SIGNAL_COMBOS = [
-    # Telematics-based (no claim count inflation)
     ["telematics_anomaly", "incident_location_mismatch"],
     ["telematics_anomaly", "claim_delta_high"],
-    # Documentation-based (no claim count inflation)
     ["staged_accident_pattern", "no_police_report", "multiple_claimants"],
     ["staged_accident_pattern", "third_party_attorney_early"],
-    # Timing-based (no claim count inflation)
     ["claim_delta_high", "recent_policy_reinstatement"],
     ["claim_filed_after_lapse_reinstatement", "claim_delta_high"],
-    # Frequency-based — kept but reduced from 3/8 to 1/8 combos
     ["frequency_spike", "rapid_refiling"],
 ]
 
@@ -125,19 +117,12 @@ def _policy_age_years(policy: dict) -> float:
     Returns the full policy term in years for claim count modeling.
 
     v1.1 fix: use full term (effective → expiry) not elapsed portion.
-    Active policies with future expiry dates were previously penalized by
-    min(expiry, today), collapsing Poisson expected value to ~0.07 per policy
-    and producing ~855 claims from 5000 customers instead of ~4000+.
-
-    The incident_date generator in generate() still clamps to (effective, today)
-    so all incidents remain in the past.
-
     Floor at 0.25 (3 months) to prevent zero-exposure edge cases.
     """
     try:
         eff = date.fromisoformat(policy["effective_date"])
         exp = date.fromisoformat(policy["expiry_date"])
-        age_days = max((exp - eff).days, 1)    # full term, not elapsed
+        age_days = max((exp - eff).days, 1)
     except (ValueError, KeyError):
         age_days = 365
     return max(age_days / 365.0, 0.25)
@@ -147,14 +132,6 @@ def _claims_count_for_policy(claim_rate: float, policy_age_years: float) -> int:
     """
     Draw a realistic claim count for one policy using a Poisson distribution,
     then hard-cap at MAX_CLAIMS_PER_POLICY_PER_YEAR * policy_age_years.
-
-    Poisson is the natural model for rare, independent events (accidents).
-    The hard cap prevents the long tail of the Poisson from producing
-    unrealistic multi-claim policies that corrupt ML training targets.
-
-    Examples at claim_rate=0.28:
-      1-year policy  → expected=0.28, Poisson draw usually 0 or 1, cap=3
-      2-year policy  → expected=0.56, draw usually 0-2, cap=6
     """
     expected = claim_rate * policy_age_years
     draw = int(_rng.poisson(expected))
@@ -183,7 +160,7 @@ def _pick_claim_type(policy: dict, state_rules: dict) -> str:
         available.extend(["uninsured_motorist"] * 1)
 
     if not available:
-        available = ["collision"]  # fallback
+        available = ["collision"]
 
     return random.choice(available)
 
@@ -212,15 +189,55 @@ def _claim_amount_for_type(claim_type: str, is_fraud: bool) -> float:
     }
     lo, hi = ranges.get(claim_type, (1000, 10000))
     if is_fraud:
-        # Fraud claims inflate by 30-80%
         lo = int(lo * 1.3)
         hi = int(hi * 1.8)
 
-    # Log-normal distribution within range for realism
     mid = (lo + hi) / 2
     std = (hi - lo) / 6
     amount = random.gauss(mid, std)
     return round(max(lo, min(hi, amount)), 2)
+
+
+def _reported_passengers(claim_type: str, is_fraud: bool) -> int:
+    """
+    Draw a realistic passenger count.
+
+    Fraud logic:
+      - staged_accident and PIP fraud inflate passenger counts (jump-in signal)
+      - Most clean claims have 0-1 passengers
+      - Fraud claims involving PIP or liability skew toward 2-4 passengers
+      - Comprehensive claims (weather, theft) are typically solo — fraud or not
+
+    Distributions are weighted choices, not uniform, to produce a realistic
+    long-tail that XGBoost can learn from rather than a flat signal.
+    """
+    if claim_type == "comprehensive":
+        # Weather/theft — driver is usually alone regardless of fraud
+        return random.choices([0, 1, 2], weights=[70, 25, 5])[0]
+
+    if is_fraud and claim_type in ("pip", "liability", "collision"):
+        # Jump-in pattern: extra passengers added to inflate injury claims
+        return random.choices([0, 1, 2, 3, 4, 5], weights=[5, 10, 25, 30, 20, 10])[0]
+
+    # Clean claims: mostly 0-1 passengers, occasionally more
+    return random.choices([0, 1, 2, 3], weights=[50, 30, 15, 5])[0]
+
+
+def _num_witnesses(is_fraud: bool) -> int:
+    """
+    Draw a realistic witness count.
+
+    Fraud logic:
+      - Staged accidents often come with 1-2 "convenient" witnesses
+      - Legitimate accidents are mostly unwitnessed or have 1 bystander
+      - 2+ witnesses on a minor claim is a soft flag
+    """
+    if is_fraud:
+        # Convenient witnesses appear more often on staged claims
+        return random.choices([0, 1, 2, 3], weights=[20, 35, 30, 15])[0]
+
+    # Clean claims: most have no witnesses or one passerby
+    return random.choices([0, 1, 2, 3], weights=[55, 30, 12, 3])[0]
 
 
 def generate(count: int, config: dict, states_data: dict,
@@ -239,7 +256,6 @@ def generate(count: int, config: dict, states_data: dict,
     claim_rate = coverage_rules.get("claim_rate_per_policy", 0.28)
     fraud_rate = config.get("fraud_rate", coverage_rules.get("fraud_rate", 0.04))
 
-    # Build a lookup of policies that are eligible to have claims
     eligible_policies = [
         p for p in policies
         if p["status"] not in ("cancelled",)
@@ -258,8 +274,6 @@ def generate(count: int, config: dict, states_data: dict,
         state = policy["state"]
         state_rules = states_data.get(state, {})
 
-        # Incident date window: full term for exposure modeling,
-        # but clamp end to today so incidents are always in the past.
         try:
             eff = date.fromisoformat(policy["effective_date"])
             exp = date.fromisoformat(policy["expiry_date"])
@@ -267,7 +281,7 @@ def generate(count: int, config: dict, states_data: dict,
             eff = date.today() - timedelta(days=365)
             exp = date.today()
 
-        incident_end = min(exp, date.today())       # clamp to today
+        incident_end = min(exp, date.today())
         incident_start = eff
         if incident_start >= incident_end:
             incident_start = incident_end - timedelta(days=180)
@@ -282,10 +296,7 @@ def generate(count: int, config: dict, states_data: dict,
                 end_date=incident_end,
             )
 
-            # Filing lag: fraud claims skew fast but have realistic variance
             if is_fraud:
-                # 50% file within 3 days (urgency signal), 50% file normally
-                # This preserves the signal while preventing it from being a cheat code
                 if random.random() < 0.50:
                     lag_days = random.choices([0, 1, 2, 3], weights=[30, 30, 25, 15])[0]
                 else:
@@ -298,7 +309,6 @@ def generate(count: int, config: dict, states_data: dict,
                 )[0]
             filed_date = incident_date + timedelta(days=lag_days)
 
-            # Claim status
             if policy["status"] == "lapsed":
                 status_choices = ["denied"] * 4 + ["under_review"] * 1
             else:
@@ -308,14 +318,11 @@ def generate(count: int, config: dict, states_data: dict,
                 )
             status = random.choice(status_choices)
 
-            # Settlement — only for approved/settled claims
             settlement_amount = None
             if status in ("approved", "settled"):
-                # Settlement is 70-95% of claim amount (deductible + negotiation)
                 ratio = random.uniform(0.70, 0.95)
                 settlement_amount = round(claim_amount * ratio, 2)
 
-            # Fraud signals
             fraud_signals: list[str] = []
             if is_fraud:
                 fraud_signals = list(random.choice(_FRAUD_SIGNAL_COMBOS))
@@ -340,6 +347,8 @@ def generate(count: int, config: dict, states_data: dict,
                 "incident_narrative": _narrative_for_type(claim_type),
                 "is_fraud": is_fraud,
                 "fraud_signals": fraud_signals,
+                "reported_passengers": _reported_passengers(claim_type, is_fraud),
+                "num_witnesses": _num_witnesses(is_fraud),
                 "source": "synthetic-v1",
             }
             records.append(record)
@@ -371,4 +380,4 @@ if __name__ == "__main__":
         output_path=Path("data/claims.json"),
         config={"coverage_rules": coverage_rules, "fraud_rate": 0.04},
         states_data=states_data,
-    )
+    )    

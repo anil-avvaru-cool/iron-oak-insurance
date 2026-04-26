@@ -1,12 +1,22 @@
 ## Important commands
-uv run python data_gen/generators/run_all.py --customers 10000 --fraud-rate 0.04
-uv run python data_gen/generators/run_all.py --customers 10000 --fraud-rate 0.04 --no-pdfs
+uv run python data_gen/generators/run_all.py --customers 10000 --fraud-rate 0.05
+uv run python data_gen/generators/run_all.py --customers 10000 --fraud-rate 0.05 --no-pdfs
+
+uv run python data_gen/generators/verify_all.py
+uv run python data_gen/generators/verify_all.py --skip-pdfs
+
+docker compose down -v postgres
+docker compose down -v ollama
 
 docker compose up -d postgres
 docker compose up -d ollama
 
 uv run python db/load_json.py --truncate
+
 docker exec iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c "SELECT is_fraud, COUNT(*), ROUND(AVG(claim_amount),0) AS avg_amount FROM claims GROUP BY is_fraud;" > sqlOut.txt
+docker exec iron-oak-insurance-postgres-1 psql -U aioi -d aioi -c "SELECT prior_claim_type, COUNT(*) FROM iso_claim_history GROUP BY prior_claim_type;" > sqlOut.txt
+
+uv run python .\db\verify_iso.py
 
 **Train all three models**
 ```bash
