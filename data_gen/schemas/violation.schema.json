@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aioi.internal/schemas/violation.schema.json",
+  "title": "AIOI Violation Record",
+  "description": "A single driving violation or conviction record linked to a customer and policy. Violations age off after 3 years (minor) or 5 years (major/DUI). Points reflect actuarial risk weight per violation type.",
+  "type": "object",
+  "required": [
+    "violation_id",
+    "customer_id",
+    "policy_number",
+    "state",
+    "violation_date",
+    "violation_type",
+    "points",
+    "expiry_date",
+    "source"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "violation_id": {
+      "type": "string",
+      "pattern": "^VIO-[0-9]{6}$",
+      "examples": ["VIO-000001", "VIO-000142"]
+    },
+    "customer_id": {
+      "type": "string",
+      "pattern": "^CUST-[0-9]{5,6}$"
+    },
+    "policy_number": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}-[0-9]{5}$"
+    },
+    "state": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 2
+    },
+    "violation_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "violation_type": {
+      "type": "string",
+      "enum": [
+        "dui_dwi",
+        "reckless_driving",
+        "speeding_major",
+        "at_fault_accident",
+        "running_red_light",
+        "distracted_driving",
+        "speeding_minor",
+        "improper_lane_change",
+        "failure_to_yield",
+        "parking_violation"
+      ]
+    },
+    "points": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "conviction_date": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+    "expiry_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "source": {
+      "type": "string",
+      "const": "synthetic-v1"
+    }
+  }
+}

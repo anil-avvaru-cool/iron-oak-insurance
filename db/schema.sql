@@ -68,6 +68,26 @@ CREATE TABLE telematics (
     source                 VARCHAR(50)  NOT NULL DEFAULT 'synthetic-v1'
 );
 
+-- ── Violations ─────────────────────────────────────────────────────────────
+CREATE TABLE violations (
+    violation_id     VARCHAR(20)  PRIMARY KEY,
+    customer_id      VARCHAR(20)  NOT NULL REFERENCES customers(customer_id),
+    policy_number    VARCHAR(20)  REFERENCES policies(policy_number),
+    state            CHAR(2)      NOT NULL,
+    violation_date   DATE         NOT NULL,
+    violation_type   VARCHAR(50)  NOT NULL,
+    points           SMALLINT     NOT NULL DEFAULT 0,
+    conviction_date  DATE,
+    expiry_date      DATE         NOT NULL,
+    source           VARCHAR(50)  NOT NULL DEFAULT 'synthetic-v1'
+);
+
+CREATE INDEX idx_violations_customer ON violations(customer_id);
+CREATE INDEX idx_violations_policy   ON violations(policy_number);
+CREATE INDEX idx_violations_date     ON violations(violation_date);
+CREATE INDEX idx_violations_type     ON violations(violation_type);
+CREATE INDEX idx_violations_expiry   ON violations(expiry_date);
+
 -- ── Document Embeddings (pgvector) ─────────────────────────────────────────
 CREATE TABLE document_chunks (
     chunk_id        VARCHAR(100) PRIMARY KEY,

@@ -24,14 +24,12 @@ from ai.utils.log import get_logger
 log = get_logger(__name__)
 
 MODEL_PATH = Path("ai/models/risk_scoring/risk_model.json")
-CATEGORICAL = ["state", "vehicle_make"]
+CATEGORICAL = ["state", "vehicle_make", "zip_prefix", "driver_age_bucket"]
 
 # Columns excluded from model features — audit/identity/target only
 EXCLUDE_COLS = {
     "policy_number",
-    "premium_annual",   # this IS the target
-    "zip_prefix",       # kept for fairness audit only
-    "vehicle_make",     # kept for fairness audit only
+    "premium_annual",   # this IS the target    
 }
 
 # Tier thresholds applied to normalized 0–100 risk score
@@ -161,9 +159,9 @@ def main() -> None:
 
     df = risk_features()
 
-    print("\nFeature sample (20 rows):")
-    print(df.sample(min(20, len(df))).to_string())
-    print(f"\npremium_annual stats:\n{df['premium_annual'].describe().round(2)}")
+    # print("\nFeature sample (20 rows):")
+    # print(df.sample(min(20, len(df))).to_string())
+    # print(f"\npremium_annual stats:\n{df['premium_annual'].describe().round(2)}")
 
     log.info("risk_train_start", rows=len(df))
     model, min_pred, max_pred = train(df)

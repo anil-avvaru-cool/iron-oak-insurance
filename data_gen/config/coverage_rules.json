@@ -11,26 +11,26 @@
     {"min": 0,  "discount_pct": 0.00}
   ],
   "vehicle_makes_models": [
-    {"make": "Toyota",     "models": ["Camry", "Corolla", "RAV4", "Tacoma", "Highlander", "Prius", "4Runner"]},
-    {"make": "Ford",       "models": ["F-150", "Explorer", "Escape", "Mustang", "Edge", "Bronco", "Maverick"]},
-    {"make": "Chevrolet",  "models": ["Silverado", "Equinox", "Malibu", "Traverse", "Colorado", "Tahoe", "Blazer"]},
-    {"make": "Honda",      "models": ["Civic", "Accord", "CR-V", "Pilot", "Odyssey", "HR-V", "Ridgeline"]},
-    {"make": "Nissan",     "models": ["Altima", "Rogue", "Sentra", "Pathfinder", "Murano", "Frontier", "Versa"]},
-    {"make": "Jeep",       "models": ["Grand Cherokee", "Wrangler", "Cherokee", "Compass", "Gladiator", "Renegade"]},
-    {"make": "Ram",        "models": ["1500", "2500", "ProMaster", "1500 Classic"]},
-    {"make": "GMC",        "models": ["Sierra 1500", "Terrain", "Acadia", "Canyon", "Yukon", "Envoy"]},
-    {"make": "Hyundai",    "models": ["Elantra", "Tucson", "Santa Fe", "Sonata", "Kona", "Palisade"]},
-    {"make": "Kia",        "models": ["Sorento", "Sportage", "Forte", "Soul", "Telluride", "Seltos"]},
-    {"make": "Subaru",     "models": ["Outback", "Forester", "Crosstrek", "Impreza", "Ascent", "Legacy"]},
-    {"make": "Tesla",      "models": ["Model 3", "Model Y", "Model S", "Model X"]},
-    {"make": "Volkswagen", "models": ["Jetta", "Tiguan", "Atlas", "Passat", "Golf", "ID.4"]},
-    {"make": "BMW",        "models": ["3 Series", "5 Series", "X3", "X5", "7 Series", "X1"]},
+    {"make": "Toyota",        "models": ["Camry", "Corolla", "RAV4", "Tacoma", "Highlander", "Prius", "4Runner"]},
+    {"make": "Ford",          "models": ["F-150", "Explorer", "Escape", "Mustang", "Edge", "Bronco", "Maverick"]},
+    {"make": "Chevrolet",     "models": ["Silverado", "Equinox", "Malibu", "Traverse", "Colorado", "Tahoe", "Blazer"]},
+    {"make": "Honda",         "models": ["Civic", "Accord", "CR-V", "Pilot", "Odyssey", "HR-V", "Ridgeline"]},
+    {"make": "Nissan",        "models": ["Altima", "Rogue", "Sentra", "Pathfinder", "Murano", "Frontier", "Versa"]},
+    {"make": "Jeep",          "models": ["Grand Cherokee", "Wrangler", "Cherokee", "Compass", "Gladiator", "Renegade"]},
+    {"make": "Ram",           "models": ["1500", "2500", "ProMaster", "1500 Classic"]},
+    {"make": "GMC",           "models": ["Sierra 1500", "Terrain", "Acadia", "Canyon", "Yukon", "Envoy"]},
+    {"make": "Hyundai",       "models": ["Elantra", "Tucson", "Santa Fe", "Sonata", "Kona", "Palisade"]},
+    {"make": "Kia",           "models": ["Sorento", "Sportage", "Forte", "Soul", "Telluride", "Seltos"]},
+    {"make": "Subaru",        "models": ["Outback", "Forester", "Crosstrek", "Impreza", "Ascent", "Legacy"]},
+    {"make": "Tesla",         "models": ["Model 3", "Model Y", "Model S", "Model X"]},
+    {"make": "Volkswagen",    "models": ["Jetta", "Tiguan", "Atlas", "Passat", "Golf", "ID.4"]},
+    {"make": "BMW",           "models": ["3 Series", "5 Series", "X3", "X5", "7 Series", "X1"]},
     {"make": "Mercedes-Benz", "models": ["C-Class", "E-Class", "GLC", "GLE", "A-Class", "GLA"]},
-    {"make": "Dodge",      "models": ["Charger", "Challenger", "Durango", "Grand Caravan"]},
-    {"make": "Mazda",      "models": ["CX-5", "Mazda3", "CX-9", "CX-30", "Mazda6"]},
-    {"make": "Lexus",      "models": ["RX", "NX", "ES", "IS", "GX", "UX"]},
-    {"make": "Buick",      "models": ["Enclave", "Encore", "Envision", "LaCrosse"]},
-    {"make": "Cadillac",   "models": ["Escalade", "XT5", "CT5", "XT4", "XT6"]}
+    {"make": "Dodge",         "models": ["Charger", "Challenger", "Durango", "Grand Caravan"]},
+    {"make": "Mazda",         "models": ["CX-5", "Mazda3", "CX-9", "CX-30", "Mazda6"]},
+    {"make": "Lexus",         "models": ["RX", "NX", "ES", "IS", "GX", "UX"]},
+    {"make": "Buick",         "models": ["Enclave", "Encore", "Envision", "LaCrosse"]},
+    {"make": "Cadillac",      "models": ["Escalade", "XT5", "CT5", "XT4", "XT6"]}
   ],
   "base_premium_ranges": {
     "low_risk":    {"min": 800,  "max": 1400},
@@ -40,5 +40,66 @@
   "telematics_enrollment_rate": 0.62,
   "multi_policy_rate": 0.15,
   "claim_rate_per_policy": 0.28,
-  "fraud_rate": 0.04
+  "fraud_rate": 0.04,
+  "violation_rules": {
+    "violation_rate_per_customer": 0.35,
+    "max_violations_per_customer": 4,
+    "dui_rate": 0.03,
+    "lookback_years": 5,
+    "age_multipliers": {
+      "under25":      2.0,
+      "standard":     1.0,
+      "senior65plus": 0.7
+    },
+    "low_drive_score_multiplier": {
+      "threshold":   50,
+      "multiplier":  1.5
+    },
+    "expiry_years": {
+      "minor": 3,
+      "major": 5
+    },
+    "major_violation_types": [
+      "dui_dwi",
+      "reckless_driving",
+      "speeding_major",
+      "at_fault_accident"
+    ],
+    "point_weights": {
+      "dui_dwi":              10,
+      "reckless_driving":      8,
+      "speeding_major":        5,
+      "at_fault_accident":     4,
+      "running_red_light":     3,
+      "distracted_driving":    3,
+      "speeding_minor":        2,
+      "improper_lane_change":  2,
+      "failure_to_yield":      1,
+      "parking_violation":     0
+    },
+    "conviction_rate_by_type": {
+      "dui_dwi":              0.85,
+      "reckless_driving":     0.75,
+      "speeding_major":       0.60,
+      "at_fault_accident":    0.40,
+      "running_red_light":    0.55,
+      "distracted_driving":   0.50,
+      "speeding_minor":       0.45,
+      "improper_lane_change": 0.30,
+      "failure_to_yield":     0.30,
+      "parking_violation":    0.20
+    },
+    "type_distribution": {
+      "speeding_minor":       0.30,
+      "speeding_major":       0.12,
+      "at_fault_accident":    0.15,
+      "distracted_driving":   0.12,
+      "running_red_light":    0.10,
+      "improper_lane_change": 0.08,
+      "failure_to_yield":     0.06,
+      "reckless_driving":     0.04,
+      "dui_dwi":              0.03,
+      "parking_violation":    0.00
+    }
+  }
 }

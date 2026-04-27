@@ -232,37 +232,69 @@ def fraud_features(engine=None) -> pd.DataFrame:
 def risk_features(engine=None) -> pd.DataFrame:
     """Returns one row per policy for risk scoring.
 
-    Extra columns included for fairness audit (state, vehicle_make, zip_prefix)
-    but excluded from model features via RISK_EXCLUDE in risk model.
+    Feature additions vs. original:
+      - driver_age_bucket: categorical age tier (actuarial high-risk = under25, senior = 65+)
+      - annual_trips: telematics exposure proxy (mileage surrogate)
+      - annual_miles: total miles driven in last 365 days
+      - has_lapse: policy previously lapsed (adverse selection signal)
+      - vehicle_age: derived from vehicle_year (newer = higher replacement cost)
+
+    Fairness audit columns (state, zip_prefix, vehicle_make) are NOW also model features.
+    Only policy_number and premium_annual are excluded from model training.
     """
     engine = engine or get_engine()
     sql = text("""
         SELECT
             p.policy_number,
             p.state,
-            LEFT(cust.zip, 3)                                      AS zip_prefix,
+            LEFT(cust.zip, 3)                                           AS zip_prefix,
             p.premium_annual,
-            COALESCE(p.drive_score, 50)                            AS drive_score,
-            COALESCE(cust.credit_score, 650)                       AS credit_score,
-            COALESCE((p.vehicle->>'year')::int, 2015)              AS vehicle_year,
-            p.vehicle->>'make'                                     AS vehicle_make,
-            COUNT(c.claim_id)                                      AS total_claims,
-            COALESCE(SUM(c.claim_amount), 0)                       AS total_claim_amount,
-            COALESCE(AVG(t12.drive_score), 50)                     AS avg_drive_score_12m,
-            COALESCE(AVG(t3.drive_score), 50)                      AS avg_drive_score_3m
+
+            -- Core risk features
+            COALESCE(p.drive_score, 50)                                 AS drive_score,
+            COALESCE(cust.credit_score, 650)                            AS credit_score,
+            COALESCE((p.vehicle->>'year')::int, 2015)                   AS vehicle_year,
+            (EXTRACT(YEAR FROM NOW())::int
+                - COALESCE((p.vehicle->>'year')::int, 2015))            AS vehicle_age,
+            p.vehicle->>'make'                                          AS vehicle_make,
+
+            -- Driver age bucket (actuarial tiers)
+            CASE
+                WHEN DATE_PART('year', AGE(cust.dob)) < 25  THEN 'under25'
+                WHEN DATE_PART('year', AGE(cust.dob)) < 65  THEN 'standard'
+                ELSE 'senior65plus'
+            END                                                         AS driver_age_bucket,
+
+            -- Claims history
+            COUNT(DISTINCT c.claim_id)                                  AS total_claims,
+            COALESCE(SUM(c.claim_amount), 0)                            AS total_claim_amount,
+
+            -- Telematics exposure (12-month window)
+            COALESCE(AVG(t12.drive_score), 50)                         AS avg_drive_score_12m,
+            COALESCE(AVG(t3.drive_score), 50)                          AS avg_drive_score_3m,
+            COALESCE(COUNT(DISTINCT t12.trip_id), 0)                    AS annual_trips,
+            COALESCE(SUM(t12.distance_miles), 0)                        AS annual_miles,
+
+            -- Lapse indicator (adverse selection proxy)
+            MAX(CASE WHEN p.status IN ('lapsed', 'cancelled') THEN 1 ELSE 0 END)
+                                                                        AS has_lapse
+
         FROM policies p
         JOIN customers cust ON cust.customer_id = p.customer_id
         LEFT JOIN claims c ON c.policy_number = p.policy_number
-        LEFT JOIN telematics t12 ON t12.policy_number = p.policy_number
+        LEFT JOIN telematics t12
+            ON  t12.policy_number = p.policy_number
             AND t12.trip_date >= NOW() - INTERVAL '365 days'
-        LEFT JOIN telematics t3 ON t3.policy_number = p.policy_number
+        LEFT JOIN telematics t3
+            ON  t3.policy_number = p.policy_number
             AND t3.trip_date >= NOW() - INTERVAL '90 days'
-        GROUP BY p.policy_number, p.state, cust.zip,
-                 p.premium_annual, p.drive_score, cust.credit_score,
-                 p.vehicle->>'year', p.vehicle->>'make'
+        GROUP BY
+            p.policy_number, p.state, cust.zip,
+            p.premium_annual, p.drive_score, cust.credit_score,
+            p.vehicle->>'year', p.vehicle->>'make',
+            cust.dob, p.status
     """)
     return pd.read_sql(sql, engine)
-
 
 def churn_features(engine=None) -> pd.DataFrame:
     """Returns one row per customer with churn label (lapsed/cancelled = 1).
