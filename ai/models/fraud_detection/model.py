@@ -38,6 +38,8 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import precision_recall_curve
 import numpy as np
 from ai.utils.log import get_logger
+from dataclasses import dataclass
+from sklearn.metrics import recall_score, precision_score, f1_score
 
 log = get_logger(__name__)
 load_dotenv()
@@ -55,19 +57,16 @@ EXCLUDE_COLS = {
     # Identity / target
     "claim_id",
     "label",
-    # Fairness audit only
+    # Fairness audit / chart column — added by main() after training
     "zip_prefix",
+    "predicted_score",          # ← ADD THIS — prevents feature mismatch in predict()
     # Raw value replaced by log-transformed version
     "days_to_file",
     # Legacy guard
     "fraud_signal_count",
     # Lifetime claim count is too strong a separator on small synthetic datasets
-    # where fraud cases cluster by customer. Use claims_last_90d for recency signal.
     "customer_claim_count",
-    # Fraud signals — fetched for explainability (Phase 5 fraud agent) but
-    # must NOT be model features: they are derived directly from is_fraud=True
-    # in the generator, so including them guarantees a perfect separator and
-    # produces an unrealistically high ROC-AUC on synthetic data.
+    # Fraud signals — explainability only, must NOT be model features
     "sig_claim_delta_high",
     "sig_telematics_anomaly",
     "sig_staged_accident",
@@ -83,6 +82,18 @@ EXCLUDE_COLS = {
 
 _FRAUD_THRESHOLD_DEFAULT = 0.50
 
+@dataclass
+class FraudTrainResult:
+    """All outputs from a single training run. Keeps main() clean."""
+    model:             xgb.XGBClassifier
+    roc_auc:           float
+    recall:            float   # at chosen_threshold — used as detection_rate in waterfall
+    precision:         float   # at chosen_threshold
+    f1:                float   # at chosen_threshold
+    threshold:         float   # chosen_threshold persisted to .threshold.json
+    fraud_rows:        int
+    total_rows:        int
+
 def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
     df = df.copy().fillna(0)
     encoders: dict[str, LabelEncoder] = {}
@@ -97,8 +108,7 @@ def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]
 def _feature_cols(df: pd.DataFrame) -> list[str]:
     return [c for c in df.columns if c not in EXCLUDE_COLS]
 
-
-def train(df: pd.DataFrame) -> xgb.XGBClassifier:
+def train(df: pd.DataFrame) -> FraudTrainResult:
     t0 = time.time()
     df, _ = preprocess(df)
     feature_cols = _feature_cols(df)
@@ -124,41 +134,70 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
     proba = model.predict_proba(X_test)[:, 1]
     roc   = roc_auc_score(y_test, proba)
 
-    # Compute threshold from data — do not use env var during training
+    # Threshold selection — computed from data, not a hardcoded default
     chosen_threshold = _select_threshold(proba, y_test.values)
-
     preds = (proba >= chosen_threshold).astype(int)
-    print(f"\nClassification report at threshold={chosen_threshold:.2f} (computed)")
-    print(classification_report(y_test, preds, target_names=["clean", "fraud"],
-                                zero_division=0))
 
-    # 0.5 for reference only
+    # Extract metrics at chosen_threshold — recall is the detection_rate for waterfall
+    recall    = recall_score(y_test,    preds, zero_division=0)
+    precision = precision_score(y_test, preds, zero_division=0)
+    f1        = f1_score(y_test,        preds, zero_division=0)
+
+    print(f"\nClassification report at threshold={chosen_threshold:.2f} (computed)")
+    print(classification_report(
+        y_test, preds,
+        target_names=["clean", "fraud"],
+        zero_division=0,
+    ))
+
+    # Default threshold kept for reference only — not used downstream
     preds_default = (proba >= 0.50).astype(int)
     print("Classification report at threshold=0.50 (default, for comparison)")
-    print(classification_report(y_test, preds_default, target_names=["clean", "fraud"],
-                                zero_division=0))
+    print(classification_report(
+        y_test, preds_default,
+        target_names=["clean", "fraud"],
+        zero_division=0,
+    ))
 
+    # Feature importance
     importance = dict(zip(X.columns, model.feature_importances_))
     top10 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:10]
-    print(f"ROC-AUC: {roc:.4f}")
+    print(f"ROC-AUC:   {roc:.4f}")
+    print(f"Recall:    {recall:.4f}  ← detection_rate used in waterfall")
+    print(f"Precision: {precision:.4f}")
+    print(f"F1:        {f1:.4f}")
+    print("Top 10 features:")
     for feat, imp in top10:
         bar = "█" * int(imp * 40)
         print(f"  {feat:<45} {imp:.4f}  {bar}")
-    cm = confusion_matrix(y_test, preds)
+
+    # Confusion matrix chart
+    cm   = confusion_matrix(y_test, preds)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["clean", "fraud"])
     disp.plot(cmap="Blues")
-    plt.title(f"Fraud Detection — Confusion Matrix (ROC-AUC: {roc:.4f})")
+    plt.title(
+        f"Fraud Detection — Confusion Matrix\n"
+        f"threshold={chosen_threshold:.2f}  |  "
+        f"ROC-AUC={roc:.4f}  |  Recall={recall:.4f}"
+    )
     plt.tight_layout()
     plt.savefig("ai/models/fraud_detection/confusion_matrix.png", dpi=150)
     plt.close()
     print("Confusion matrix saved → ai/models/fraud_detection/confusion_matrix.png")
 
+    # Persist model and threshold
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     model.save_model(MODEL_PATH)
 
     threshold_path = MODEL_PATH.with_suffix(".threshold.json")
-    threshold_path.write_text(json.dumps({"fraud_threshold": chosen_threshold}))
-    print(f"Threshold saved → {threshold_path}")
+    threshold_path.write_text(json.dumps({
+        "fraud_threshold": chosen_threshold,
+        "roc_auc":         round(roc, 4),
+        "recall":          round(recall, 4),
+        "precision":       round(precision, 4),
+        "f1":              round(f1, 4),
+    }))
+    print(f"Threshold + metrics saved → {threshold_path}")
 
     log.info(
         "model_trained",
@@ -167,9 +206,22 @@ def train(df: pd.DataFrame) -> xgb.XGBClassifier:
         fraud_rows=int(y.sum()),
         threshold=chosen_threshold,
         roc_auc=round(roc, 4),
+        recall=round(recall, 4),
+        precision=round(precision, 4),
+        f1=round(f1, 4),
         elapsed_s=round(time.time() - t0, 2),
     )
-    return model
+
+    return FraudTrainResult(
+        model=model,
+        roc_auc=roc,
+        recall=recall,
+        precision=precision,
+        f1=f1,
+        threshold=chosen_threshold,
+        fraud_rows=int(y.sum()),
+        total_rows=len(df),
+    )
 
 def predict(records: list[dict]) -> list[dict]:
     model = xgb.XGBClassifier()
@@ -177,6 +229,7 @@ def predict(records: list[dict]) -> list[dict]:
 
     # Threshold priority: saved file → env var override → hardcoded default
     threshold_path = MODEL_PATH.with_suffix(".threshold.json")
+    
     if threshold_path.exists():
         threshold = float(json.loads(threshold_path.read_text())["fraud_threshold"])
     else:
@@ -244,8 +297,12 @@ def _select_threshold(proba: np.ndarray, y_true: np.ndarray) -> float:
 def main() -> None:
     from ai.pipelines.ingestion.feature_engineer import fraud_features
     from ai.models.fairness_audit import run_audit
+    from ai.models.fraud_detection.waterfall_params import extract_params
+    from ai.models.fraud_detection.annual_loss_waterfall import build_waterfall
+    from ai.models.fraud_detection.fraud_pie_chart import from_scored_records
 
     df = fraud_features()
+
     log.info(
         "fraud_train_start",
         rows=len(df),
@@ -253,21 +310,45 @@ def main() -> None:
         fraud_pct=round(df["label"].mean() * 100, 2),
     )
 
-    # Print feature column list so it's visible in training output
-    from ai.models.fraud_detection.model import EXCLUDE_COLS
+    # Print feature columns so they're visible in training output
     feature_cols = [c for c in df.columns if c not in EXCLUDE_COLS]
     print(f"\nFeature columns ({len(feature_cols)}):")
     for col in sorted(feature_cols):
         print(f"  {col}")
     print()
 
-    model = train(df)
+    # Train — result carries model + all metrics
+    result = train(df)
 
-    # Score full dataset for fairness audit
+    # ── FIX 2: snapshot BEFORE df is mutated ──────────────────────────────
+    # df["predicted_score"] below adds a column to df.
+    # predict() calls _feature_cols(df) internally — if predicted_score is
+    # present in the records dict, XGBoost rejects the feature set.
+    # Snapshot now while df is still clean.
+    raw_records = df.to_dict("records")
+
+    # Score full dataset for fairness audit — this mutates df
     df_proc, _ = preprocess(df.copy())
     feature_cols_proc = _feature_cols(df_proc)
-    df["predicted_score"] = model.predict_proba(df_proc[feature_cols_proc])[:, 1]
+    df["predicted_score"] = result.model.predict_proba(df_proc[feature_cols_proc])[:, 1]
+
+    # Fairness audit — needs predicted_score column on df
     run_audit(df, model_name="fraud", score_col="predicted_score", label_col="label")
+
+    # Pie chart — uses raw_records (no predicted_score column)
+    scored = predict(raw_records)
+    from_scored_records(scored, roc_auc=result.roc_auc)
+
+    # Waterfall — recall = TP / (TP + FN), most defensible detection_rate
+    params = extract_params(detection_rate=result.recall)
+    build_waterfall(**params)
+
+    log.info(
+        "fraud_charts_saved",
+        model="fraud",
+        recall_used_as_detection_rate=round(result.recall, 4),
+        roc_auc=round(result.roc_auc, 4),
+    )
 
 
 if __name__ == "__main__":
