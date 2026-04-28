@@ -26,7 +26,7 @@ from pathlib import Path
 
 from dateutil.relativedelta import relativedelta
 
-from data_gen.generators.validate import validate_records
+from validate import validate_records
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

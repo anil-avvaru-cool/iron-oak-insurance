@@ -23,6 +23,11 @@ to avoid high-variance flags on tiny populations).
 Output: prints a report to stdout; logs summary via structured logger.
 Writes a JSON report to ai/models/fairness_reports/<model>_<timestamp>.json
 for record-keeping.
+
+AK/HI flags: small population states (n<65). Label rate estimates 
+are high-variance at this sample size (4-5 events). 
+Flags are statistically expected with n<65 and should be 
+re-evaluated when dataset >= 5,000 customers.
 """
 from __future__ import annotations
 
@@ -46,7 +51,7 @@ REPORT_DIR = Path("ai/models/fairness_reports")
 # Slice columns available per model
 SLICE_COLS: dict[str, list[str]] = {
     "fraud":  ["state", "zip_prefix", "vehicle_make"],
-    "risk":   ["state", "zip_prefix", "vehicle_make"],
+    "risk":   ["state", "zip_prefix", "vehicle_make", "violation_tier"],
     "churn":  ["state", "zip_prefix"],
 }
 

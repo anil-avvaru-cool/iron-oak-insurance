@@ -10,10 +10,11 @@ Generation order is fixed — each step depends on the previous:
     1. customers.json           (standalone)
     2. policies.json            (reads customers.json)
     3. claims.json              (reads policies.json)
-    4. iso_claim_history.json   (reads customers/policies/claims)  # NEW
+    4. iso_claim_history.json   (reads customers/policies/claims)
     5. telematics.json          (reads policies.json; skips non-enrolled)
-    6. PDFs                     (reads customers/policies/claims)
-    7. FAQs                     (Phase 4 stub — no-op until Phase 4)
+    6. violations.json          (reads customers/policies)
+    7. PDFs                     (reads customers/policies/claims)
+    8. FAQs                     (Phase 4 stub — no-op until Phase 4)
 """
 import argparse
 import json
@@ -83,11 +84,33 @@ def main() -> None:
     gen_policies(args.customers, data_dir / "policies.json", config, states_data)
     print(f"  ✓ policies ({time.time()-t0:.1f}s)")
 
-    # ── Step 3: Claims ─────────────────────────────────────────────────────
-    from claim_gen import main as gen_claims
+    # ── Step 3: Claims ─────────────────────────────────────────────────────   
+    from claim_gen import generate as _gen_claims_records
+    import json as _json
     t0 = time.time()
-    gen_claims(args.customers, data_dir / "claims.json", config, states_data)
-    print(f"  ✓ claims ({time.time()-t0:.1f}s)")
+    customers_data = _json.loads((data_dir / "customers.json").read_text())
+    policies_data  = _json.loads((data_dir / "policies.json").read_text())
+            
+    violations_data = (
+        _json.loads((data_dir / "violations.json").read_text())
+        if (data_dir / "violations.json").exists() else []
+    )
+    claims_records = _gen_claims_records(
+        count=args.customers,
+        config=config,
+        states_data=states_data,
+        policies=policies_data,
+        customers=customers_data,
+        violations=violations_data,
+    )
+    (data_dir / "claims.json").parent.mkdir(parents=True, exist_ok=True)
+    with open(data_dir / "claims.json", "w") as _f:
+        _json.dump(claims_records, _f, indent=2, default=str)
+    fraud_n = sum(1 for r in claims_records if r["is_fraud"])
+    print(f"  ✓ claims — {len(claims_records):,} records "
+          f"({fraud_n} fraud, {fraud_n/max(len(claims_records),1):.1%}) "
+          f"({time.time()-t0:.1f}s)")
+    claims_data = claims_records
 
     # ── Step 4: ISO Claim History ──────────────────────────────────────────  # NEW
     from iso_gen import main as gen_iso                                        # NEW
@@ -109,7 +132,22 @@ def main() -> None:
     gen_telematics(args.trips_target, data_dir / "telematics.json", config, states_data)
     print(f"  ✓ telematics ({time.time()-t0:.1f}s)")
 
-    # ── Step 6: PDFs (optional) ────────────────────────────────────────────
+    # ── Step 6: Violations ─────────────────────────────────────────────────
+    from violation_gen import main as gen_violations
+    t0 = time.time()
+    if not customers_data:
+        customers_data = json.loads((data_dir / "customers.json").read_text())
+    if not policies_data:
+        policies_data  = json.loads((data_dir / "policies.json").read_text())
+    gen_violations(
+        output_path=data_dir / "violations.json",
+        config={"violation_rules": coverage_rules["violation_rules"]},
+        customers=customers_data,
+        policies=policies_data,
+    )
+    print(f"  ✓ violations ({time.time()-t0:.1f}s)")
+
+    # ── Step 7: PDFs (optional) ────────────────────────────────────────────
     if not args.no_pdfs:
         from document_gen import main as gen_documents
         t0 = time.time()
@@ -118,7 +156,7 @@ def main() -> None:
     else:
         print("  – PDFs skipped (--no-pdfs)")
 
-    # ── Step 7: FAQs (Phase 4 stub) ────────────────────────────────────────
+    # ── Step 8: FAQs (Phase 4 stub) ────────────────────────────────────────
     from faq_gen import main as gen_faqs
     t0 = time.time()
     gen_faqs(faqs_dir / "faq_corpus.json", states_data)
@@ -133,6 +171,7 @@ def main() -> None:
     print(f"  data/claims.json            → {data_dir}/claims.json")
     print(f"  data/iso_claim_history.json → {data_dir}/iso_claim_history.json")  # NEW
     print(f"  data/telematics.json        → {data_dir}/telematics.json")
+    print(f"  data/violations.json        → {data_dir}/violations.json")      # NEW
     if not args.no_pdfs:
         print(f"  documents/                  → {docs_dir}/")
     print(f"  faqs/faq_corpus.json        → {faqs_dir}/faq_corpus.json")

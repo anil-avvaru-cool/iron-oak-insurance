@@ -20,6 +20,7 @@ import verify_customers
 import verify_policies
 import verify_claims
 import verify_telematics
+import verify_violations
 import verify_documents
 
 
@@ -37,12 +38,18 @@ def main() -> None:
     results["policies"] = verify_policies.verify(d / "policies.json", d / "customers.json")
     results["claims"] = verify_claims.verify(d / "claims.json", d / "policies.json")
     results["telematics"] = verify_telematics.verify(d / "telematics.json", d / "policies.json")
+    results["violations"] = verify_violations.main(
+        violations_path=d / "violations.json",
+        customers_path=d / "customers.json",
+        policies_path=d / "policies.json",
+        config_path=Path("data_gen/config/coverage_rules.json"),
+    )
 
     if not args.skip_pdfs:
         results["documents"] = verify_documents.verify(args.docs_dir, d / "policies.json", d / "claims.json")
 
     print(f"\n{'='*55}")
-    print("  Phase 1 Verification Summary")
+    print("  Phase 1+ Verification Summary")
     print(f"{'='*55}")
     all_passed = True
     for name, passed in results.items():

@@ -230,69 +230,172 @@ def fraud_features(engine=None) -> pd.DataFrame:
     return df
 
 def risk_features(engine=None) -> pd.DataFrame:
-    """Returns one row per policy for risk scoring.
+    """
+    Returns one row per policy for pure behavioral risk scoring.
 
-    Feature additions vs. original:
-      - driver_age_bucket: categorical age tier (actuarial high-risk = under25, senior = 65+)
-      - annual_trips: telematics exposure proxy (mileage surrogate)
-      - annual_miles: total miles driven in last 365 days
-      - has_lapse: policy previously lapsed (adverse selection signal)
-      - vehicle_age: derived from vehicle_year (newer = higher replacement cost)
+    Target: loss_score (built in model.py from claims components) — NOT premium_annual.
+    premium_annual is fully removed to prevent target leakage via the pricing formula.
 
-    Fairness audit columns (state, zip_prefix, vehicle_make) are NOW also model features.
-    Only policy_number and premium_annual are excluded from model training.
+    Feature groups:
+      Vehicle:     vehicle_age, vehicle_make (severity predictors — repair cost)
+      Driver:      driver_age_bucket, credit_score (frequency predictors)
+      Geographic:  state, zip_prefix (environmental risk — static exposure)
+      Stability:   has_lapse (adverse selection signal)
+      Telematics:  drive_score, avg_drive_score_12m, avg_drive_score_3m,
+                   drive_score_delta, annual_trips, annual_miles,
+                   avg_night_driving_pct, hard_brakes_per_mile,
+                   speeding_per_mile, avg_trip_distance
+      Claims:      total_claims, total_claim_amount, claims_last_12m,
+                   claims_last_90d, amount_last_12m
+                   (claims columns are loss_score components AND lagged predictors)
+      Violations:  active_violation_points, active_violation_count,
+                   has_dui, has_major_violation, violations_last_3y
+
+    Excluded from model features (identity + loss_score target components):
+      policy_number, total_claim_amount, claims_last_12m,
+      claims_last_90d, amount_last_12m
     """
     engine = engine or get_engine()
     sql = text("""
+        WITH claim_stats AS (
+            SELECT
+                c.policy_number,
+                COUNT(*)                                                AS total_claims,
+                COALESCE(SUM(c.claim_amount), 0)                        AS total_claim_amount,
+                COUNT(*) FILTER (
+                    WHERE c.filed_date >= NOW() - INTERVAL '365 days'
+                )                                                       AS claims_last_12m,
+                COUNT(*) FILTER (
+                    WHERE c.filed_date >= NOW() - INTERVAL '90 days'
+                )                                                       AS claims_last_90d,
+                COALESCE(SUM(c.claim_amount) FILTER (
+                    WHERE c.filed_date >= NOW() - INTERVAL '365 days'
+                ), 0)                                                   AS amount_last_12m
+            FROM claims c
+            GROUP BY c.policy_number
+        ),
+        telem_stats AS (
+            SELECT
+                t.policy_number,
+                COUNT(*)                                                AS annual_trips,
+                COALESCE(SUM(t.distance_miles), 0)                      AS annual_miles,
+                COALESCE(AVG(t.drive_score), 50)                        AS avg_drive_score_12m,
+                COALESCE(AVG(t.night_driving_pct), 0)                   AS avg_night_driving_pct,
+                COALESCE(
+                    SUM(t.hard_brakes)
+                    / NULLIF(SUM(t.distance_miles), 0), 0
+                )                                                       AS hard_brakes_per_mile,
+                COALESCE(
+                    SUM(t.speeding_events)
+                    / NULLIF(SUM(t.distance_miles), 0), 0
+                )                                                       AS speeding_per_mile,
+                COALESCE(
+                    SUM(t.distance_miles)
+                    / NULLIF(COUNT(*), 0), 0
+                )                                                       AS avg_trip_distance
+            FROM telematics t
+            WHERE t.trip_date >= NOW() - INTERVAL '365 days'
+            GROUP BY t.policy_number
+        ),
+        telem_recent AS (
+            SELECT
+                t.policy_number,
+                COALESCE(AVG(t.drive_score), 50)                        AS avg_drive_score_3m
+            FROM telematics t
+            WHERE t.trip_date >= NOW() - INTERVAL '90 days'
+            GROUP BY t.policy_number
+        ),
+        violation_stats AS (
+            SELECT
+                v.policy_number,
+                COALESCE(SUM(v.points)  FILTER (
+                    WHERE v.expiry_date >= CURRENT_DATE
+                ), 0)                                                   AS active_violation_points,
+                COUNT(*) FILTER (
+                    WHERE v.expiry_date >= CURRENT_DATE
+                )                                                       AS active_violation_count,
+                MAX(CASE
+                    WHEN v.violation_type = 'dui_dwi'
+                     AND v.expiry_date >= CURRENT_DATE
+                    THEN 1 ELSE 0
+                END)                                                    AS has_dui,
+                MAX(CASE
+                    WHEN v.violation_type IN (
+                        'dui_dwi','reckless_driving',
+                        'speeding_major','at_fault_accident'
+                    )
+                     AND v.expiry_date >= CURRENT_DATE
+                    THEN 1 ELSE 0
+                END)                                                    AS has_major_violation,
+                COUNT(*) FILTER (
+                    WHERE v.violation_date >= CURRENT_DATE - INTERVAL '3 years'
+                )                                                       AS violations_last_3y
+            FROM violations v
+            GROUP BY v.policy_number
+        )
         SELECT
             p.policy_number,
+
+            -- Audit / identity (state and zip_prefix are ALSO model features)
             p.state,
             LEFT(cust.zip, 3)                                           AS zip_prefix,
-            p.premium_annual,
 
-            -- Core risk features
-            COALESCE(p.drive_score, 50)                                 AS drive_score,
-            COALESCE(cust.credit_score, 650)                            AS credit_score,
-            COALESCE((p.vehicle->>'year')::int, 2015)                   AS vehicle_year,
+            -- Vehicle features (severity predictors)
             (EXTRACT(YEAR FROM NOW())::int
                 - COALESCE((p.vehicle->>'year')::int, 2015))            AS vehicle_age,
             p.vehicle->>'make'                                          AS vehicle_make,
 
-            -- Driver age bucket (actuarial tiers)
+            -- Driver features (frequency predictors)
             CASE
                 WHEN DATE_PART('year', AGE(cust.dob)) < 25  THEN 'under25'
                 WHEN DATE_PART('year', AGE(cust.dob)) < 65  THEN 'standard'
                 ELSE 'senior65plus'
             END                                                         AS driver_age_bucket,
+            COALESCE(cust.credit_score, 650)                            AS credit_score,
 
-            -- Claims history
-            COUNT(DISTINCT c.claim_id)                                  AS total_claims,
-            COALESCE(SUM(c.claim_amount), 0)                            AS total_claim_amount,
+            -- Policy stability
+            CASE WHEN p.status IN ('lapsed','cancelled') THEN 1 ELSE 0 END
+                                                                        AS has_lapse,
 
-            -- Telematics exposure (12-month window)
-            COALESCE(AVG(t12.drive_score), 50)                         AS avg_drive_score_12m,
-            COALESCE(AVG(t3.drive_score), 50)                          AS avg_drive_score_3m,
-            COALESCE(COUNT(DISTINCT t12.trip_id), 0)                    AS annual_trips,
-            COALESCE(SUM(t12.distance_miles), 0)                        AS annual_miles,
+            -- Telematics behavioral features
+            COALESCE(p.drive_score, 50)                                 AS drive_score,
+            COALESCE(ts.avg_drive_score_12m, 50)                        AS avg_drive_score_12m,
+            COALESCE(tr.avg_drive_score_3m, 50)                         AS avg_drive_score_3m,
+            -- Negative delta = deteriorating behavior = rising risk
+            COALESCE(tr.avg_drive_score_3m, 50)
+                - COALESCE(ts.avg_drive_score_12m, 50)                  AS drive_score_delta,
+            COALESCE(ts.annual_trips, 0)                                AS annual_trips,
+            COALESCE(ts.annual_miles, 0)                                AS annual_miles,
+            COALESCE(ts.avg_night_driving_pct, 0)                       AS avg_night_driving_pct,
+            COALESCE(ts.hard_brakes_per_mile, 0)                        AS hard_brakes_per_mile,
+            COALESCE(ts.speeding_per_mile, 0)                           AS speeding_per_mile,
+            COALESCE(ts.avg_trip_distance, 0)                           AS avg_trip_distance,
 
-            -- Lapse indicator (adverse selection proxy)
-            MAX(CASE WHEN p.status IN ('lapsed', 'cancelled') THEN 1 ELSE 0 END)
-                                                                        AS has_lapse
+            -- Claims history (loss_score components + lagged predictors)
+            COALESCE(cs.total_claims, 0)                                AS total_claims,
+            COALESCE(cs.total_claim_amount, 0)                          AS total_claim_amount,
+            COALESCE(cs.claims_last_12m, 0)                             AS claims_last_12m,
+            COALESCE(cs.claims_last_90d, 0)                             AS claims_last_90d,
+            COALESCE(cs.amount_last_12m, 0)                             AS amount_last_12m,
+
+            -- Violation features (driving record — highest actuarial impact)
+            COALESCE(vs.active_violation_points, 0)                     AS active_violation_points,
+            COALESCE(vs.active_violation_count, 0)                      AS active_violation_count,
+            COALESCE(vs.has_dui, 0)                                     AS has_dui,
+            COALESCE(vs.has_major_violation, 0)                         AS has_major_violation,
+            COALESCE(vs.violations_last_3y, 0)                          AS violations_last_3y
 
         FROM policies p
-        JOIN customers cust ON cust.customer_id = p.customer_id
-        LEFT JOIN claims c ON c.policy_number = p.policy_number
-        LEFT JOIN telematics t12
-            ON  t12.policy_number = p.policy_number
-            AND t12.trip_date >= NOW() - INTERVAL '365 days'
-        LEFT JOIN telematics t3
-            ON  t3.policy_number = p.policy_number
-            AND t3.trip_date >= NOW() - INTERVAL '90 days'
-        GROUP BY
-            p.policy_number, p.state, cust.zip,
-            p.premium_annual, p.drive_score, cust.credit_score,
-            p.vehicle->>'year', p.vehicle->>'make',
-            cust.dob, p.status
+        JOIN customers cust
+            ON  cust.customer_id = p.customer_id
+        LEFT JOIN claim_stats cs
+            ON  cs.policy_number = p.policy_number
+        LEFT JOIN telem_stats ts
+            ON  ts.policy_number = p.policy_number
+        LEFT JOIN telem_recent tr
+            ON  tr.policy_number = p.policy_number
+        LEFT JOIN violation_stats vs
+            ON  vs.policy_number = p.policy_number
     """)
     return pd.read_sql(sql, engine)
 

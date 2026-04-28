@@ -312,4 +312,88 @@ def main(
 
     # Load config
     config        = json.loads(config_path.read_text())
-    rules
+    rules         = config.get("violation_rules", {})
+    point_weights = rules.get("point_weights", {})
+    major_types   = rules.get("major_violation_types", [])
+    lookback_years = rules.get("lookback_years", 5)
+
+    # Load reference data
+    customers: list[dict] = []
+    policies:  list[dict] = []
+
+    if customers_path.exists():
+        customers = json.loads(customers_path.read_text())
+    else:
+        _warn(f"customers.json not found at {customers_path} — "
+              "skipping referential integrity checks")
+
+    if policies_path.exists():
+        policies = json.loads(policies_path.read_text())
+    else:
+        _warn(f"policies.json not found at {policies_path} — "
+              "skipping policy referential integrity check")
+
+    # Run checks
+    records = check_file_exists(violations_path)
+    if records is None:
+        print("\n  Overall: FAIL ✗  (file unreadable — stopping)\n")
+        return False
+
+    schema_dir = violations_path.parent.parent / "data_gen" / "schemas"
+    if not schema_dir.exists():
+        # fallback: look relative to this file
+        schema_dir = Path(__file__).parent.parent / "schemas"
+
+    results = [
+        check_schema(records, schema_dir),
+        check_unique_ids(records),
+        check_violation_rate(records, customers) if customers else True,
+        check_dui_rate(records),
+        check_dates(records, lookback_years),
+        check_points(records, point_weights),
+        check_active_violations(records),
+        check_no_parking_violations(records),
+        check_referential_integrity(records, customers, policies)
+            if customers and policies else True,
+        check_major_vs_minor_points(records, major_types),
+    ]
+
+    passed = all(results)
+    print("=" * 55)
+    print(f"  Overall: {'ALL PASS ✓' if passed else 'FAILURES DETECTED ✗'}")
+    print("=" * 55 + "\n")
+    return passed
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Verify violations.json data quality."
+    )
+    parser.add_argument(
+        "--path",
+        type=Path,
+        default=Path("data/violations.json"),
+        help="Path to violations.json",
+    )
+    parser.add_argument(
+        "--customers",
+        type=Path,
+        default=Path("data/customers.json"),
+        help="Path to customers.json for referential integrity check",
+    )
+    parser.add_argument(
+        "--policies",
+        type=Path,
+        default=Path("data/policies.json"),
+        help="Path to policies.json for referential integrity check",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("data_gen/config/coverage_rules.json"),
+        help="Path to coverage_rules.json",
+    )
+    args = parser.parse_args()
+
+    ok = main(args.path, args.customers, args.policies, args.config)
+    sys.exit(0 if ok else 1)
