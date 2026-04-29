@@ -1501,6 +1501,11 @@ An HTTP request logs one line:
 - [ ] `LOG_LEVEL=DEBUG uv run python -m ai.models.fraud_detection.model` produces debug output
 - [ ] Missing env var causes `EnvironmentError` with the variable name, not a silent default
 - [ ] `uv run ruff check .` passes
+- [ ] Risk model writes stage1_clf.json, stage2_reg.json, bounds.json, calibration.json
+- [ ] Stage 1 AUC > 0.70 (binary: has_claim)
+- [ ] Stage 2 MAE reported (non-zero rows only)
+- [ ] Combined Gini coefficient reported (not R²)
+- [ ] API returns risk_score, risk_tier, AND claim_probability
 
 ### 8.5 Git Tag
 

@@ -283,9 +283,18 @@ def _narrative_for_type(claim_type: str) -> str:
     return random.choice(templates.get(claim_type, _COLLISION_NARRATIVES))
 
 
-def _claim_amount_for_type(claim_type: str, is_fraud: bool) -> float:
+def _claim_amount_for_type(
+    claim_type: str,
+    is_fraud: bool,
+    risk_multiplier: float = 1.0,
+) -> float:
     """
     Realistic claim amounts by type. Fraud claims skew higher.
+    risk_multiplier (from _claim_risk_multiplier) shifts the sampling
+    window upward for high-risk policies so drive_score and violations
+    have genuine correlation with total_claim_amount in the training set.
+    The shift is moderate (max 40% uplift at multiplier=4.0) to keep
+    amounts within realistic actuarial bounds.
     """
     ranges = {
         "collision": (1500, 18000),
@@ -299,11 +308,19 @@ def _claim_amount_for_type(claim_type: str, is_fraud: bool) -> float:
         lo = int(lo * 1.3)
         hi = int(hi * 1.8)
 
+    # Shift sampling window toward higher amounts for riskier policies.
+    # risk_multiplier range: ~0.7 (safe telematics) to 4.0 (cap).
+    # Amount uplift: linear between 0% at mult=1.0 and +40% at mult=4.0,
+    # clamped to the declared hi ceiling so amounts stay realistic.
+    if risk_multiplier > 1.0:
+        uplift = min((risk_multiplier - 1.0) / 3.0, 1.0) * 0.40
+        lo = int(lo * (1.0 + uplift))
+        hi = int(hi * (1.0 + uplift))
+
     mid = (lo + hi) / 2
     std = (hi - lo) / 6
     amount = random.gauss(mid, std)
     return round(max(lo, min(hi, amount)), 2)
-
 
 def _reported_passengers(claim_type: str, is_fraud: bool) -> int:
     if claim_type == "comprehensive":
@@ -426,7 +443,7 @@ def generate(
         for _ in range(n_claims):
             is_fraud   = random.random() < fraud_rate
             claim_type = _pick_claim_type(policy, state_rules)
-            claim_amount = _claim_amount_for_type(claim_type, is_fraud)
+            claim_amount = _claim_amount_for_type(claim_type, is_fraud, risk_mult)
 
             incident_date = fake.date_between(
                 start_date=incident_start,
