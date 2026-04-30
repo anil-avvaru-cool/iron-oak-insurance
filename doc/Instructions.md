@@ -1,9 +1,0 @@
-- **Strategy**: Validate approach before acting; research the web when needed. Flag course corrections proactively.
-    - Security, compliance and legal concerns are most important than AI benefits, so, design AI/chatbot carefully.
-- **Analysis**: Thoroughly understand the codebase before making changes. Root-cause problems — no workarounds.
-- **Design**: Iterative phases with working prototypes. Simple, extensible, not over-engineered. Mark placeholders for future improvements.
-    - Do not add "hyphen" in folder names, use underscore if required.
-    - Do not use default values while pulling environment values, app has to fail fast if there is no key example use os.environ 
-- **Artifacts**: Generate all scripts/commands for both Windows (local) and Linux (AWS).
-- **Clarifications**: Ask only when necessary; include a suggested answer.
-- **Git**: Do not commit any changes.
