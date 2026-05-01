@@ -43,6 +43,7 @@
 | Verification as separate Python files | Each verifier runs standalone (`python verify_customers.py`) or via `verify_all.py`; no test framework required |
 | Filename convention load-bearing | `decl_`, `claim_letter_`, `renewal_` prefixes used by `chunk_router.py` in Phase 4 — do not rename |
 | All 7 coverage keys always present | `required` always emitted (never omitted for optional coverages) — required by Phase 3 JSONB queries |
+| Violations and ISO claim history | Driver violations are generated and validated in Phase 1; `run_all.py` emits `data/violations.json` and `data/iso_claim_history.json` for Phase 2 ingestion |
 | Coverage elections depend on vehicle age | Older vehicles less likely to carry collision/comprehensive — realistic policyholder behavior |
 
 ---
@@ -556,12 +557,14 @@ uv run python data_gen\generators\run_all.py --customers 100 --no-pdfs
 **Generation order is fixed:**
 
 ```
-1. customers.json     ← standalone
-2. policies.json      ← reads customers.json
-3. claims.json        ← reads policies.json
-4. telematics.json    ← reads policies.json; skips non-enrolled
-5. PDFs               ← reads customers, policies, claims
-6. FAQs               ← Phase 4 stub (no-op)
+1. customers.json           ← standalone
+2. policies.json            ← reads customers.json
+3. claims.json              ← reads policies.json
+4. iso_claim_history.json   ← reads customers, policies, claims
+5. telematics.json          ← reads policies.json; skips non-enrolled
+6. violations.json          ← reads customers, policies
+7. PDFs                     ← reads customers, policies, claims
+8. FAQs                     ← Phase 4 stub (no-op)
 ```
 
 ---

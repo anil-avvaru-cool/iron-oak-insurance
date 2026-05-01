@@ -26,7 +26,7 @@
 
 | Area | Old stub | This phase |
 |------|----------|------------|
-| Risk scoring | Description only | Full `XGBRegressor`, normalized score, risk tier |
+| Risk scoring | Description only | Hurdle Model (Stage 1 classifier + Stage 2 regressor), normalized combined risk score, risk tier |
 | Churn prediction | Description only | Full `XGBClassifier`, drive score delta feature |
 | Fairness audit | `raise NotImplementedError` | Implemented disparate impact analysis |
 | Logging | TODO comment | Minimal structured JSON logger, shared across all modules |
@@ -479,18 +479,19 @@ if __name__ == "__main__":
 
 **`ai/models/risk_scoring/model.py`**
 
-Risk scoring uses `XGBRegressor` to predict `premium_annual` as a proxy for actuarial risk. The raw prediction is normalized to a 0–100 scale and bucketed into three tiers.
+Risk scoring uses a Hurdle Model: a calibrated XGBoost classifier predicts claim probability in Stage 1, and a separate XGBoost regressor predicts conditional claim severity in Stage 2. The two-stage output is combined into a normalized 0–100 risk score and bucketed into low/medium/high tiers.
 
 ```python
 """
-Risk Scoring — XGBoost regressor predicting premium as a risk proxy.
+Risk Scoring — Hurdle Model (Stage 1 classifier + Stage 2 regressor).
 
 Module run:  uv run python -m ai.models.risk_scoring.model
 Library use: from ai.models.risk_scoring.model import train, predict
 
 Output per policy:
-  risk_score      float 0–100   (normalized predicted premium)
-  risk_tier       str           "low" | "medium" | "high"
+  risk_score         float 0–100   (normalized combined hurdle score)
+  risk_tier          str           "low" | "medium" | "high"
+  claim_probability  float 0–1     (calibrated Stage 1 probability)
 
 Environment variables required (no defaults):
   DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME

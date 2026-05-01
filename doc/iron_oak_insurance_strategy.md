@@ -21,53 +21,118 @@ Single public repository `iron-oak-insurance` — data generation and AI code in
 ```
 iron-oak-insurance/
 ├── data_gen/
+│   ├── __init__.py
 │   ├── generators/
+│   │   ├── __init__.py
 │   │   ├── customer_gen.py
 │   │   ├── policy_gen.py
 │   │   ├── claim_gen.py
 │   │   ├── telematics_gen.py
 │   │   ├── document_gen.py       # PDF generator
 │   │   ├── faq_gen.py            # FAQ generator (added Phase 4)
-│   │   └── run_all.py            # Single entry point
+│   │   ├── iso_gen.py
+│   │   ├── violation_gen.py
+│   │   ├── run_all.py            # Single entry point
+│   │   ├── validate.py
+│   │   ├── verify_all.py
+│   │   ├── verify_claims.py
+│   │   ├── verify_customers.py
+│   │   ├── verify_documents.py
+│   │   ├── verify_lateReport.py
+│   │   ├── verify_policies.py
+│   │   ├── verify_rag.py
+│   │   ├── verify_telematics.py
+│   │   └── verify_violations.py
 │   ├── schemas/
 │   │   ├── customer.schema.json
 │   │   ├── policy.schema.json
 │   │   ├── claim.schema.json
 │   │   ├── telematics.schema.json
-│   │   └── faq.schema.json       # FAQ schema (added Phase 4)
+│   │   ├── faq.schema.json       # FAQ schema (added Phase 4)
+│   │   ├── iso_claim_history.schema.json
+│   │   └── violation.schema.json
 │   └── config/
 │       ├── states.json           # State-specific rules
 │       └── coverage_rules.json
 ├── ai/
+│   ├── __init__.py
 │   ├── agents/                   # AWS Bedrock agents
+│   │   ├── __init__.py
 │   │   ├── claims_agent/
+│   │   │   └── __init__.py
 │   │   ├── fraud_agent/
+│   │   │   └── __init__.py
 │   │   └── policy_advisor_agent/
+│   │       └── __init__.py
 │   ├── pipelines/
+│   │   ├── __init__.py
 │   │   ├── ingestion/            # JSON → PostgreSQL / vector DB
 │   │   ├── embedding/            # Document chunking & embedding
 │   │   └── rag/                  # RAG pipeline for PDF docs + FAQs
 │   ├── models/
-│   │   ├── fraud_detection/
+│   │   ├── __init__.py
+│   │   ├── fairness_audit.py
 │   │   ├── churn_prediction/
+│   │   │   ├── __init__.py
+│   │   │   ├── churn_model.json
+│   │   │   └── model.py
+│   │   ├── fairness_reports/
+│   │   │   └── [JSON files]
+│   │   ├── fraud_detection/
 │   │   └── risk_scoring/
-│   └── api/
-│       ├── handlers/             # AWS Lambda handlers
-│       └── routers/              # FastAPI route definitions
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── handlers/             # AWS Lambda handlers
+│   │   │   ├── __init__.py
+│   │   │   └── main.py
+│   │   └── routers/              # FastAPI route definitions
+│   │       ├── __init__.py
+│   │       ├── models_router.py
+│   │       └── rag_router.py
+│   └── utils/
+│       ├── __init__.py
+│       └── log.py
 ├── db/
 │   ├── schema.sql
-│   └── load_json.py
+│   ├── load_json.py
+│   └── verify_iso.py
 ├── infra/
 │   └── cdk/                      # AWS CDK stacks
 ├── tests/
 │   ├── unit/
 │   └── integration/
 ├── data/                         # gitignored — generated locally on demand
+│   ├── claims.json
+│   ├── customers.json
+│   ├── iso_claim_history.json
+│   ├── policies.json
+│   ├── telematics.json
+│   └── violations.json
 ├── documents/                    # gitignored — generated locally on demand
 ├── faqs/                         # gitignored — generated locally on demand
+│   └── faq_corpus.json
+├── doc/
+│   ├── Change_log.md
+│   ├── Cheat_sheet.md
+│   ├── CROSS_PHASE.md
+│   ├── IMPLEMENTATION_PLAN.md
+│   ├── iron_oak_insurance_strategy.md
+│   ├── PHASE_1_DATA_GEN.md
+│   ├── PHASE_2_DATABASE.md
+│   ├── PHASE_3_ML.md
+│   ├── PHASE_4_RAG.md
+│   ├── PHASE_5_BEDROCK.md
+│   ├── Presentation_summary.md
+│   ├── Skill-AI-Expert.md
+│   ├── Strategy_ROI.md
+│   └── Troubleshooting.md
 ├── docker-compose.yml            # Postgres + pgvector + Ollama, one command
 ├── .env.example                  # Required AWS variables, no values
+├── main.py
+├── pyproject.toml
 ├── requirements.txt
+├── sqlOut.txt
+├── uv.lock
 └── README.md
 ```
 
