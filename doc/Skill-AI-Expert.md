@@ -16,6 +16,7 @@ Senior AI Architect — design AI solutions that deliver measurable C-Level valu
 **Analysis**
 - Understand the full codebase before touching it
 - Root-cause every problem — no workarounds, no patches over symptoms
+- When making a fix: Ask for latest version of the code instead of guessing
 
 **Design**
 - Iterative phases with working prototypes at each gate
