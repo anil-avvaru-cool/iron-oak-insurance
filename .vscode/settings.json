@@ -47,6 +47,8 @@
         "/^& \\.venv\\\\Scripts\\\\Activate\\.ps1; uv run python data_gen/generators/run_all\\.py --customers 1000 --trips-per-policy 5 --pdf-docs 10; uv run python verify_phase1\\.py$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "pip": true,
+        "uv": true
     }
 }

@@ -60,9 +60,14 @@ CATEGORICAL = ["state", "vehicle_make", "driver_age_bucket"]
 EXCLUDE_COLS_BASE = {
     "policy_number", "premium_annual", "zip_prefix",
     "has_claim",           # Stage 1 target
-    "claim_amount",        # Stage 2 target (raw)
+    "total_claim_amount",        # Stage 2 target (raw)
     "log_claim_amount",    # Stage 2 target (transformed)
     "claim_amount_capped", # intermediate
+    "effective_date",      # used for temporal gate only
+    "total_claims",        # exclude to prevent leakage
+    "claims_last_12m",     # exclude to prevent leakage
+    "claims_last_90d",     # exclude to prevent leakage
+    "amount_last_12m",     # exclude to prevent leakage
 }
 
 # Tier thresholds applied to normalized 0–100 combined score
@@ -198,21 +203,20 @@ def _build_stage1(
 
     base_clf = xgb.XGBClassifier(
         # More trees + lower LR to compensate for class imbalance
-        n_estimators=400,
+        n_estimators=200,
         max_depth=5,
         learning_rate=0.03,
         scale_pos_weight=pos_weight,
         # Regularization to reduce over-prediction
-        min_child_weight=10,
+        min_child_weight=20,
         subsample=0.8,
         colsample_bytree=0.7,
         gamma=1.0,
-        reg_alpha=0.1,
-        reg_lambda=2.0,
+        reg_alpha=1.0,
+        reg_lambda=5.0,
         eval_metric="auc",
         random_state=42,
         verbosity=0,
-        early_stopping_rounds=30,
     )
     base_clf.fit(
         X_train, y_train,
@@ -222,7 +226,7 @@ def _build_stage1(
 
     # Platt calibration: fixes the 14-point over-prediction gap
     # (predicted 39.83% vs labeled 25.46% in prior run)
-    calibrated = CalibratedClassifierCV(base_clf, cv="prefit", method="sigmoid")
+    calibrated = CalibratedClassifierCV(base_clf, method="sigmoid")
     calibrated.fit(X_test, y_test)
 
     proba      = calibrated.predict_proba(X_test)[:, 1]
@@ -252,9 +256,8 @@ def _build_stage1(
             f"Review _apply_lapse_temporal_gate() and feature_engineer.py."
         )
     log.info(
-        "risk_lapse_leakage_ok",
-        has_lapse_importance=f"{lapse_imp:.4f}",
-        threshold=LAPSE_IMPORTANCE_HARD_LIMIT,
+        f"risk_lapse_leakage_ok has_lapse_importance={lapse_imp:.4f} "
+        f"threshold={LAPSE_IMPORTANCE_HARD_LIMIT}"
     )
 
     return calibrated, auc, best_thresh, best_f1
@@ -293,17 +296,17 @@ def _build_stage2(
     Returns (model, mae_original_scale).
     """
     model = xgb.XGBRegressor(
-        n_estimators=400,
+        n_estimators=200,
         max_depth=5,
         learning_rate=0.03,
         subsample=0.8,
         colsample_bytree=0.7,
-        reg_alpha=0.1,
-        reg_lambda=2.0,
+        min_child_weight=20,
+        reg_alpha=1.0,
+        reg_lambda=5.0,
         eval_metric="mae",
         random_state=42,
         verbosity=0,
-        early_stopping_rounds=30,
     )
     model.fit(
         X_train, y_train_log,
@@ -391,7 +394,7 @@ def train(df: pd.DataFrame) -> dict:
     df, encoders = preprocess(df, fit=True)
 
     # ── Stage 1 data ─────────────────────────────────────────────────────────
-    df["has_claim"] = (df["claim_amount"] > 0).astype(int)
+    df["has_claim"] = (df["total_claim_amount"] > 0).astype(int)
 
     stage1_features = _feature_cols(df)
     X1 = df[stage1_features]
@@ -403,16 +406,16 @@ def train(df: pd.DataFrame) -> dict:
     stage1, auc, best_thresh, best_f1 = _build_stage1(X1_tr, y1_tr, X1_te, y1_te)
 
     # ── Stage 2 data (non-zero claims only) ──────────────────────────────────
-    df_pos = df[df["claim_amount"] > 0].copy()
+    df_pos = df[df["total_claim_amount"] > 0].copy()
     log_target, severity_cap = _prepare_severity_target(
-        df_pos["claim_amount"], fit=True
+        df_pos["total_claim_amount"], fit=True
     )
     df_pos["log_claim_amount"] = log_target
 
     stage2_features = _feature_cols(df_pos)
     X2 = df_pos[stage2_features]
     y2_log = df_pos["log_claim_amount"]
-    y2_raw = df_pos["claim_amount"]
+    y2_raw = df_pos["total_claim_amount"]
 
     X2_tr, X2_te, y2_tr, y2_te_log = train_test_split(
         X2, y2_log, test_size=0.2, random_state=42
@@ -422,7 +425,7 @@ def train(df: pd.DataFrame) -> dict:
     stage2, mae = _build_stage2(X2_tr, y2_tr, X2_te, y2_te_raw, severity_cap)
 
     # ── Combined Gini on full dataset ─────────────────────────────────────────
-    combined_gini = _combined_gini(stage1, stage2, X1, df["claim_amount"], severity_cap)
+    combined_gini = _combined_gini(stage1, stage2, X1, df["total_claim_amount"], severity_cap)
     print(f"\nCombined Hurdle Score  Gini={combined_gini:.4f}")
 
     # ── State calibration offsets ─────────────────────────────────────────────
@@ -458,19 +461,13 @@ def train(df: pd.DataFrame) -> dict:
 
     elapsed = round(time.time() - t0, 2)
     log.info(
-        "model_trained",
-        model="risk",
-        stage1_auc=round(auc, 4),
-        stage1_gini=round(2 * auc - 1, 4),
-        stage1_best_threshold=best_thresh,
-        stage1_f1_at_best=round(best_f1, 4),
-        stage2_mae=round(mae, 2),
-        stage2_mean_severity=round(float(df_pos["claim_amount"].mean()), 2),
-        stage2_mae_pct=round(mae / float(df_pos["claim_amount"].mean()) * 100, 1),
-        combined_gini=round(combined_gini, 4),
-        n_total=len(df),
-        n_with_claim=int(y1.sum()),
-        elapsed_s=elapsed,
+        f"model_trained model=risk stage1_auc={round(auc, 4)} "
+        f"stage1_gini={round(2 * auc - 1, 4)} stage1_best_threshold={best_thresh} "
+        f"stage1_f1_at_best={round(best_f1, 4)} stage2_mae={round(mae, 2)} "
+        f"stage2_mean_severity={round(float(df_pos["total_claim_amount"].mean()), 2)} "
+        f"stage2_mae_pct={round(mae / float(df_pos["total_claim_amount"].mean()) * 100, 1)} "
+        f"combined_gini={round(combined_gini, 4)} n_total={len(df)} "
+        f"n_with_claim={int(y1.sum())} elapsed_s={elapsed}"
     )
 
     return {
@@ -497,7 +494,7 @@ def _compute_state_offsets(
     proba       = stage1.predict_proba(X)[:, 1]
     df_eval     = df[["state"]].copy()
     df_eval["pred"]  = proba
-    df_eval["label"] = (df["claim_amount"] > 0).astype(int)
+    df_eval["label"] = (df["total_claim_amount"] > 0).astype(int)
 
     review_count = 0
     for state, grp in df_eval.groupby("state"):
@@ -609,11 +606,9 @@ def main() -> None:
 
     df = risk_features()
     log.info(
-        "risk_train_start",
-        rows=len(df),
-        with_claim=int((df["claim_amount"] > 0).sum()),
-        zero_claim=int((df["claim_amount"] == 0).sum()),
-        zero_pct=round(float((df["claim_amount"] == 0).mean()) * 100, 1),
+        f"risk_train_start rows={len(df)} with_claim={int((df["total_claim_amount"] > 0).sum())} "
+        f"zero_claim={int((df["total_claim_amount"] == 0).sum())} "
+        f"zero_pct={round(float((df["total_claim_amount"] == 0).mean()) * 100, 1)}"
     )
 
     artifacts = train(df)

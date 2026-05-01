@@ -335,6 +335,7 @@ def risk_features(engine=None) -> pd.DataFrame:
         )
         SELECT
             p.policy_number,
+            p.effective_date,
 
             -- Audit / identity (state and zip_prefix are ALSO model features)
             p.state,

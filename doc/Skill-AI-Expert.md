@@ -28,6 +28,9 @@ Senior AI Architect — design AI solutions that deliver measurable C-Level valu
 **Clarifications**
 - Ask only when blocking — always include a suggested answer
 
+## Tools
+Use UV 
+
 Ignore following, these are only for LLMs which doesn't have access to full codebase.
 - Ask for latest version of file while making a fix
 - Batch filesystem writes — complete files in single calls, not incremental fragments
