@@ -36,12 +36,14 @@ import os
 import time
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+import shap
 import xgboost as xgb
 
 log = logging.getLogger(__name__)
@@ -52,6 +54,10 @@ STAGE1_PATH = MODEL_DIR / "stage1_clf.json"
 STAGE2_PATH = MODEL_DIR / "stage2_reg.json"
 BOUNDS_PATH = MODEL_DIR / "risk_model.bounds.json"
 CALIB_PATH  = MODEL_DIR / "calibration.json"   # Platt scaling params
+SHAP_STAGE1_PATH = MODEL_DIR / "shap_stage1.npy"  # SHAP values for Stage 1
+SHAP_STAGE2_PATH = MODEL_DIR / "shap_stage2.npy"  # SHAP values for Stage 2
+SHAP_STAGE1_PNG = MODEL_DIR / "shap_stage1_summary.png"
+SHAP_STAGE2_PNG = MODEL_DIR / "shap_stage2_summary.png"
 
 # ── Feature contracts ────────────────────────────────────────────────────────
 CATEGORICAL = ["state", "vehicle_make", "driver_age_bucket"]
@@ -194,7 +200,7 @@ def _build_stage1(
     y_train: pd.Series,
     X_test: pd.DataFrame,
     y_test: pd.Series,
-) -> tuple[CalibratedClassifierCV, float, float, float]:
+) -> tuple[CalibratedClassifierCV, float, float, float, np.ndarray]:
     """
     Train XGBClassifier then wrap in Platt calibration.
     Returns (calibrated_model, auc, best_threshold, f1_at_best).
@@ -246,7 +252,17 @@ def _build_stage1(
     importance = dict(zip(X_train.columns, base_clf.feature_importances_))
     lapse_imp  = importance.get("has_lapse", 0.0)
 
-    _print_stage1_report(importance, auc, gini, best_thresh, best_f1, default_f1)
+    # Compute SHAP values for Stage 1
+    explainer_stage1 = shap.TreeExplainer(base_clf)
+    shap_values_stage1 = explainer_stage1.shap_values(X_train)
+    # For binary classification, shap_values is a list [negative_class, positive_class]
+    if isinstance(shap_values_stage1, list):
+        shap_values_stage1 = shap_values_stage1[1]  # Use positive class SHAP values
+    shap_importance_stage1 = np.abs(shap_values_stage1).mean(axis=0)
+    shap_importance_dict_stage1 = dict(zip(X_train.columns, shap_importance_stage1))
+
+    _print_stage1_report(importance, shap_importance_dict_stage1, auc, gini, best_thresh, best_f1, default_f1)
+    _save_shap_summary_plot(shap_values_stage1, X_train, SHAP_STAGE1_PNG, "Stage 1 SHAP Summary")
 
     # Hard stop if lapse leakage is still present after temporal gate
     if lapse_imp >= LAPSE_IMPORTANCE_HARD_LIMIT:
@@ -260,11 +276,12 @@ def _build_stage1(
         f"threshold={LAPSE_IMPORTANCE_HARD_LIMIT}"
     )
 
-    return calibrated, auc, best_thresh, best_f1
+    return calibrated, auc, best_thresh, best_f1, shap_values_stage1
 
 
 def _print_stage1_report(
     importance: dict,
+    shap_importance: dict,
     auc: float,
     gini: float,
     best_thresh: float,
@@ -275,12 +292,38 @@ def _print_stage1_report(
     print(f"  Threshold 0.50 → F1={default_f1:.4f}  |  Best threshold {best_thresh:.2f} "
           f"→ F1={best_f1:.4f}")
     top = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:10]
-    print("Top features:")
+    print("Top features (XGBoost importance):")
     max_imp = top[0][1] if top else 1.0
     for feat, imp in top:
         bar = "█" * max(1, int(imp / max_imp * 7))
         print(f"  {feat:<45} {imp:.4f}  {bar}")
+    
+    top_shap = sorted(shap_importance.items(), key=lambda x: x[1], reverse=True)[:10]
+    print("Top features (SHAP importance):")
+    max_shap = top_shap[0][1] if top_shap else 1.0
+    for feat, imp in top_shap:
+        bar = "█" * max(1, int(imp / max_shap * 7))
+        print(f"  {feat:<45} {imp:.4f}  {bar}")
 
+def _save_shap_summary_plot(
+    shap_values: np.ndarray,
+    X: pd.DataFrame,
+    path: Path,
+    title: str,
+) -> None:
+    """Save a SHAP summary plot as a PNG for stakeholder reporting."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        plt.figure(figsize=(10, 8))
+        shap.summary_plot(shap_values, X, show=False)
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(path, dpi=150)
+        plt.close()
+        log.info(f"Saved SHAP summary plot: {path}")
+    except Exception as exc:
+        plt.close()
+        log.warning(f"Failed to save SHAP summary plot {path}: {exc}")
 
 # ── Stage 2 — Log-transform regressor ───────────────────────────────────────
 
@@ -290,7 +333,7 @@ def _build_stage2(
     X_test: pd.DataFrame,
     y_test_raw: pd.Series,
     cap: float,
-) -> tuple[xgb.XGBRegressor, float]:
+) -> tuple[xgb.XGBRegressor, float, np.ndarray]:
     """
     Fit regressor on log1p(claim_amount). Evaluate MAE on original scale.
     Returns (model, mae_original_scale).
@@ -326,13 +369,27 @@ def _build_stage2(
     print(f"\nStage 2 (Regressor — log-severity)   MAE=${mae:,.2f}  "
           f"({mae_pct:.1f}% of mean severity ${mean_sev:,.2f})  "
           f"(non-zero rows: {len(X_train):,})")
-    print("Top features:")
+    print("Top features (XGBoost importance):")
     max_imp = top[0][1] if top else 1.0
     for feat, imp in top:
         bar = "█" * max(1, int(imp / max_imp * 7))
         print(f"  {feat:<45} {imp:.4f}  {bar}")
 
-    return model, mae
+    # Compute SHAP values for Stage 2
+    explainer_stage2 = shap.TreeExplainer(model)
+    shap_values_stage2 = explainer_stage2.shap_values(X_train)
+    shap_importance_stage2 = np.abs(shap_values_stage2).mean(axis=0)
+    shap_importance_dict_stage2 = dict(zip(X_train.columns, shap_importance_stage2))
+    _save_shap_summary_plot(shap_values_stage2, X_train, SHAP_STAGE2_PNG, "Stage 2 SHAP Summary")
+    
+    top_shap = sorted(shap_importance_dict_stage2.items(), key=lambda x: x[1], reverse=True)[:10]
+    print("Top features (SHAP importance):")
+    max_shap = top_shap[0][1] if top_shap else 1.0
+    for feat, imp in top_shap:
+        bar = "█" * max(1, int(imp / max_shap * 7))
+        print(f"  {feat:<45} {imp:.4f}  {bar}")
+
+    return model, mae, shap_values_stage2
 
 
 # ── Combined Gini ────────────────────────────────────────────────────────────
@@ -403,7 +460,7 @@ def train(df: pd.DataFrame) -> dict:
     X1_tr, X1_te, y1_tr, y1_te = train_test_split(
         X1, y1, test_size=0.2, random_state=42, stratify=y1
     )
-    stage1, auc, best_thresh, best_f1 = _build_stage1(X1_tr, y1_tr, X1_te, y1_te)
+    stage1, auc, best_thresh, best_f1, shap_stage1 = _build_stage1(X1_tr, y1_tr, X1_te, y1_te)
 
     # ── Stage 2 data (non-zero claims only) ──────────────────────────────────
     df_pos = df[df["total_claim_amount"] > 0].copy()
@@ -422,7 +479,7 @@ def train(df: pd.DataFrame) -> dict:
     )
     _, y2_te_raw = train_test_split(y2_raw, test_size=0.2, random_state=42)
 
-    stage2, mae = _build_stage2(X2_tr, y2_tr, X2_te, y2_te_raw, severity_cap)
+    stage2, mae, shap_stage2 = _build_stage2(X2_tr, y2_tr, X2_te, y2_te_raw, severity_cap)
 
     # ── Combined Gini on full dataset ─────────────────────────────────────────
     combined_gini = _combined_gini(stage1, stage2, X1, df["total_claim_amount"], severity_cap)
@@ -458,6 +515,10 @@ def train(df: pd.DataFrame) -> dict:
     # Platt calibration params (sigmoid coefficients from CalibratedClassifierCV)
     calib_params = _extract_calibration_params(stage1)
     CALIB_PATH.write_text(json.dumps(calib_params, indent=2))
+
+    # Save SHAP values
+    np.save(SHAP_STAGE1_PATH, shap_stage1)
+    np.save(SHAP_STAGE2_PATH, shap_stage2)
 
     elapsed = round(time.time() - t0, 2)
     log.info(
@@ -596,6 +657,48 @@ def predict(records: list[dict]) -> list[dict]:
         rec["risk_tier"]         = _tier(float(scores[i]))
 
     return records
+
+
+# ── SHAP Explanation ────────────────────────────────────────────────────────
+
+def explain_prediction(record: dict) -> dict:
+    """
+    Explain a single prediction using SHAP values.
+
+    Returns SHAP values for Stage 1 (claim probability) and Stage 2 (severity).
+    """
+    # Load models and preprocess
+    stage1_base = xgb.XGBClassifier()
+    stage1_base.load_model(STAGE1_PATH)
+    
+    stage2 = xgb.XGBRegressor()
+    stage2.load_model(STAGE2_PATH)
+    
+    encoders = {}  # As in predict
+    df = pd.DataFrame([record])
+    df, _ = preprocess(df, encoders=encoders, fit=False)
+    feat_cols = _feature_cols(df)
+    
+    # Load SHAP explainers (recreate since not persisted)
+    explainer_stage1 = shap.TreeExplainer(stage1_base)
+    explainer_stage2 = shap.TreeExplainer(stage2)
+    
+    # Compute SHAP values for this instance
+    shap_values_stage1 = explainer_stage1.shap_values(df[feat_cols])
+    if isinstance(shap_values_stage1, list):
+        shap_values_stage1 = shap_values_stage1[1]  # Positive class
+    
+    shap_values_stage2 = explainer_stage2.shap_values(df[feat_cols])
+    
+    # Convert to dicts
+    shap_dict_stage1 = dict(zip(feat_cols, shap_values_stage1[0]))
+    shap_dict_stage2 = dict(zip(feat_cols, shap_values_stage2[0]))
+    
+    return {
+        "stage1_shap": shap_dict_stage1,
+        "stage2_shap": shap_dict_stage2,
+        "features": dict(zip(feat_cols, df[feat_cols].iloc[0])),
+    }
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

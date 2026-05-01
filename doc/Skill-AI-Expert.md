@@ -31,7 +31,7 @@ Senior AI Architect — design AI solutions that deliver measurable C-Level valu
 ## Tools
 Use UV 
 
-Ignore following, these are only for LLMs which doesn't have access to full codebase.
+Ignore following if you have access to full codebase
 - Ask for latest version of file while making a fix
 - Batch filesystem writes — complete files in single calls, not incremental fragments
 - Answer directly from knowledge for stable topics; use tools only when genuinely needed

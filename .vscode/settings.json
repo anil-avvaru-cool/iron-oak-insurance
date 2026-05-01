@@ -49,6 +49,10 @@
             "matchCommandLine": true
         },
         "pip": true,
-        "uv": true
+        "uv": true,
+        "/^python -m py_compile ai/models/risk_scoring/model\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }
