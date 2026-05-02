@@ -70,6 +70,7 @@ EXCLUDE_COLS_BASE = {
     "log_claim_amount",    # Stage 2 target (transformed)
     "claim_amount_capped", # intermediate
     "effective_date",      # used for temporal gate only
+    "lapse_date",          # used for temporal gate only
     "total_claims",        # exclude to prevent leakage
     "claims_last_12m",     # exclude to prevent leakage
     "claims_last_90d",     # exclude to prevent leakage
@@ -474,10 +475,9 @@ def train(df: pd.DataFrame) -> dict:
     y2_log = df_pos["log_claim_amount"]
     y2_raw = df_pos["total_claim_amount"]
 
-    X2_tr, X2_te, y2_tr, y2_te_log = train_test_split(
-        X2, y2_log, test_size=0.2, random_state=42
+    X2_tr, X2_te, y2_tr, y2_te_log, _, y2_te_raw = train_test_split(
+        X2, y2_log, y2_raw, test_size=0.2, random_state=42
     )
-    _, y2_te_raw = train_test_split(y2_raw, test_size=0.2, random_state=42)
 
     stage2, mae, shap_stage2 = _build_stage2(X2_tr, y2_tr, X2_te, y2_te_raw, severity_cap)
 
@@ -733,7 +733,7 @@ def main() -> None:
     else:
         df["predicted_score"] = 50.0
 
-    df["label"] = (df["predicted_score"] >= TIER_THRESHOLDS["medium"]).astype(int)
+    df["label"] = (df["total_claim_amount"] > 0).astype(int)
     run_audit(df, model_name="risk", score_col="predicted_score", label_col="label")
 
 

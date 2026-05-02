@@ -354,9 +354,23 @@ def risk_features(engine=None) -> pd.DataFrame:
             END                                                         AS driver_age_bucket,
             COALESCE(cust.credit_score, 650)                            AS credit_score,
 
-            -- Policy stability
-            CASE WHEN p.status IN ('lapsed','cancelled') THEN 1 ELSE 0 END
-                                                                        AS has_lapse,
+            -- Policy stability: prior policy lapse/cancellation before this term
+            (
+                SELECT MAX(prev.expiry_date)
+                FROM policies prev
+                WHERE prev.customer_id = p.customer_id
+                  AND prev.policy_number != p.policy_number
+                  AND prev.status IN ('lapsed','cancelled')
+                  AND prev.expiry_date < p.effective_date
+            ) AS lapse_date,
+            CASE WHEN (
+                SELECT MAX(prev.expiry_date)
+                FROM policies prev
+                WHERE prev.customer_id = p.customer_id
+                  AND prev.policy_number != p.policy_number
+                  AND prev.status IN ('lapsed','cancelled')
+                  AND prev.expiry_date < p.effective_date
+            ) IS NOT NULL THEN 1 ELSE 0 END AS has_lapse,
 
             -- Telematics behavioral features
             COALESCE(p.drive_score, 50)                                 AS drive_score,
