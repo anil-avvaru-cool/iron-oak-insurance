@@ -19,7 +19,7 @@ Senior AI Architect — design AI solutions that deliver measurable C-Level valu
 
 **Design**
 - Iterative phases with working prototypes at each gate
-- Simple and extensible — not over-engineered
+- Simple and extensible — not over engineered
 - Mark `# TODO:` placeholders explicitly for future phases
 
 **Artifacts**
